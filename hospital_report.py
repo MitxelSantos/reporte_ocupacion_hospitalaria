@@ -1,977 +1,1157 @@
 #!/usr/bin/env python3
 """
-Generador de Informe Final Optimizado de Capacidad Hospitalaria
-VERSIÓN DEFINITIVA CON MÁXIMAS MEJORAS VISUALES Y DE DETALLE
-Secretaría de Salud del Tolima
+Generador de Informes Final Optimizado de Capacidad Hospitalaria
+Secretaría de Salud del Tolima - Estructura por Servicios
 
-MEJORAS FINALES:
-- Alertas críticas en formato TABLA (mejor visual)
-- CAMAS vs CAMILLAS distinguidas en TODOS los análisis
-- Análisis detallado por MUNICIPIO + PRESTADOR específico
-- Gráficos más altos verticalmente para mejor visualización
-- Tablas optimizadas con mejor estructura visual
+Versión actualizada con enfoque por tipos de servicio:
+- Observación/Urgencias: Camas y camillas de observación
+- Cuidado Crítico: UCI y Cuidado Intermedio
+- Hospitalización: Adulto, Pediátrica, etc.
+
+Estructura del informe: Tolima → Ibagué → Demás Municipios
 
 Desarrollado por: Ing. José Miguel Santos
 Para: Secretaría de Salud del Tolima
 """
 
 import pandas as pd
-import matplotlib.pyplot as plt
 import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
 from datetime import datetime
+import sys
+import os
+from pathlib import Path
 import warnings
-warnings.filterwarnings('ignore')
-
-# Importaciones de ReportLab
-from reportlab.lib.pagesizes import A4
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, PageBreak
+from reportlab.lib.pagesizes import letter, A4
+from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
-from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, PageBreak, Table, TableStyle
+from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT, TA_JUSTIFY
+from reportlab.pdfgen import canvas
+import matplotlib.patches as mpatches
 
-# Colores institucionales Secretaría de Salud del Tolima
+# Configurar warnings
+warnings.filterwarnings('ignore')
+
+# Configuración de matplotlib
+plt.style.use('default')
+sns.set_palette("husl")
+
+# Configuración global
 COLORS = {
-    "primary": "#7D0F2B",      # Rojo institucional
-    "secondary": "#F2A900",     # Amarillo dorado
-    "accent": "#5A4214",        # Marrón
-    "success": "#509E2F",       # Verde
-    "warning": "#F7941D",       # Naranja
-    "white": "#FFFFFF",         # Blanco
+    "primary": "#7D0F2B",     # Rojo institucional Tolima
+    "secondary": "#F2A900",    # Amarillo dorado
+    "accent": "#5A4214",       # Marrón
+    "success": "#509E2F",      # Verde
+    "warning": "#F7941D",      # Naranja
+    "danger": "#D32F2F",       # Rojo peligro
+    "white": "#FFFFFF",        # Blanco
+    "light_gray": "#F5F5F5",   # Gris claro
+    "dark_gray": "#424242",    # Gris oscuro
 }
 
-def procesar_datos_final_optimizado(archivo_excel):
-    """Procesa datos con distinción completa CAMAS/CAMILLAS en todos los análisis"""
-    print("📊 Procesando datos con optimización final...")
+# Umbrales de ocupación
+UMBRALES = {
+    "critico": 90,      # ≥90% crítico
+    "advertencia": 70,  # 70-89% advertencia
+    "normal": 0         # <70% normal
+}
+
+class HospitalReportGenerator:
+    """Generador de informes de capacidad hospitalaria optimizado por servicios."""
     
-    # Leer Excel
-    df = pd.read_excel(archivo_excel)
+    def __init__(self):
+        """Inicializar el generador de reportes."""
+        self.df = None
+        self.fecha_procesamiento = datetime.now()
+        self.mapeo_servicios = self._crear_mapeo_servicios()
+        
+    def _crear_mapeo_servicios(self):
+        """Crear mapeo de capacidades a tipos de servicio."""
+        return {
+            'observacion': {
+                'nombre': 'Observación/Urgencias',
+                'descripcion': 'Servicios de urgencias y observación',
+                'keywords': ['observacion', 'urgencias', 'emergencia'],
+                'color': COLORS['warning']
+            },
+            'cuidado_critico': {
+                'nombre': 'Cuidado Crítico',
+                'descripcion': 'UCI y Cuidado Intermedio',
+                'keywords': ['uci', 'cuidado intensivo', 'cuidado intermedio', 'intensivo', 'intermedio'],
+                'color': COLORS['danger']
+            },
+            'hospitalizacion': {
+                'nombre': 'Hospitalización',
+                'descripcion': 'Servicios de hospitalización general',
+                'keywords': ['adulto', 'pediatric', 'gineco', 'medicina', 'cirugia', 'general'],
+                'color': COLORS['primary']
+            }
+        }
     
-    # Limpiar datos numéricos
-    columnas_numericas = [
-        'cantidad_ci_TOTAL_REPS', 
-        'ocupacion_ci_confirmado_covid19',
-        'ocupacion_ci_sospechoso_covid19', 
-        'ocupacion_ci_no_covid19',
-        'cantidad_ci_disponibles',
-        'total_ingresos_paciente_servicio'
-    ]
+    def _clasificar_servicio(self, nombre_capacidad):
+        """Clasificar una capacidad en tipo de servicio."""
+        nombre_lower = str(nombre_capacidad).lower()
+        
+        # Verificar observación/urgencias
+        for keyword in self.mapeo_servicios['observacion']['keywords']:
+            if keyword in nombre_lower:
+                return 'observacion'
+        
+        # Verificar cuidado crítico
+        for keyword in self.mapeo_servicios['cuidado_critico']['keywords']:
+            if keyword in nombre_lower:
+                return 'cuidado_critico'
+        
+        # Por defecto, hospitalización
+        return 'hospitalizacion'
     
-    for col in columnas_numericas:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+    def cargar_datos(self, archivo_excel):
+        """Cargar y procesar datos del archivo Excel."""
+        try:
+            print(f"📂 Cargando datos desde: {archivo_excel}")
+            
+            # Cargar datos
+            self.df = pd.read_excel(archivo_excel)
+            print(f"📊 Datos cargados: {len(self.df)} registros")
+            
+            # Procesar datos
+            self._procesar_datos()
+            print("✅ Datos procesados exitosamente")
+            
+            return True
+            
+        except Exception as e:
+            print(f"❌ Error al cargar datos: {str(e)}")
+            return False
     
-    # Usar la columna correcta para ocupación
-    df['ocupacion_total'] = df['total_ingresos_paciente_servicio']
+    def _procesar_datos(self):
+        """Procesar y limpiar los datos cargados."""
+        # Limpiar nombres de columnas
+        self.df.columns = self.df.columns.str.strip()
+        
+        # Convertir valores numéricos
+        columnas_numericas = [
+            'cantidad_ci_TOTAL_REPS',
+            'ocupacion_ci_confirmado_covid19', 
+            'ocupacion_ci_sospechoso_covid19',
+            'ocupacion_ci_no_covid19',
+            'cantidad_ci_disponibles',
+            'total_ingresos_paciente_servicio'
+        ]
+        
+        for col in columnas_numericas:
+            if col in self.df.columns:
+                self.df[col] = pd.to_numeric(self.df[col], errors='coerce').fillna(0)
+        
+        # Calcular ocupación total
+        self.df['ocupacion_total'] = (
+            self.df['ocupacion_ci_confirmado_covid19'] + 
+            self.df['ocupacion_ci_sospechoso_covid19'] + 
+            self.df['ocupacion_ci_no_covid19']
+        )
+        
+        # Calcular porcentaje de ocupación
+        self.df['porcentaje_ocupacion'] = np.where(
+            self.df['cantidad_ci_TOTAL_REPS'] > 0,
+            (self.df['ocupacion_total'] / self.df['cantidad_ci_TOTAL_REPS']) * 100,
+            0
+        )
+        
+        # Clasificar por tipo de servicio
+        self.df['tipo_servicio'] = self.df['nombre_capacidad_instalada'].apply(self._clasificar_servicio)
+        
+        # Limpiar nombres de municipios
+        self.df['municipio_sede_prestador'] = self.df['municipio_sede_prestador'].str.strip().str.title()
+        
+        # Asegurar que Ibagué esté bien escrito
+        self.df['municipio_sede_prestador'] = self.df['municipio_sede_prestador'].replace(
+            ['Ibague', 'IBAGUE', 'ibague'], 'Ibagué'
+        )
     
-    # Calcular porcentaje de ocupación
-    df['porcentaje_ocupacion'] = np.where(
-        df['cantidad_ci_TOTAL_REPS'] > 0,
-        (df['ocupacion_total'] / df['cantidad_ci_TOTAL_REPS']) * 100, 
-        0
-    )
+    def _obtener_estadisticas_tolima(self):
+        """Obtener estadísticas generales del departamento del Tolima."""
+        stats = {}
+        
+        # Totales por tipo de servicio
+        for tipo_servicio in self.mapeo_servicios.keys():
+            df_servicio = self.df[self.df['tipo_servicio'] == tipo_servicio]
+            
+            stats[tipo_servicio] = {
+                'capacidad_total': df_servicio['cantidad_ci_TOTAL_REPS'].sum(),
+                'ocupacion_total': df_servicio['ocupacion_total'].sum(),
+                'ocupacion_covid': df_servicio['ocupacion_ci_confirmado_covid19'].sum() + 
+                                 df_servicio['ocupacion_ci_sospechoso_covid19'].sum(),
+                'ocupacion_no_covid': df_servicio['ocupacion_ci_no_covid19'].sum(),
+                'disponible': df_servicio['cantidad_ci_disponibles'].sum()
+            }
+            
+            # Calcular porcentajes
+            if stats[tipo_servicio]['capacidad_total'] > 0:
+                stats[tipo_servicio]['porcentaje_ocupacion'] = (
+                    stats[tipo_servicio]['ocupacion_total'] / 
+                    stats[tipo_servicio]['capacidad_total']
+                ) * 100
+            else:
+                stats[tipo_servicio]['porcentaje_ocupacion'] = 0
+        
+        # Estadísticas generales
+        stats['general'] = {
+            'total_municipios': self.df['municipio_sede_prestador'].nunique(),
+            'total_prestadores': self.df['nombre_prestador'].nunique(),
+            'total_sedes': self.df['nombre_sede_prestador'].nunique(),
+            'capacidad_total_departamento': self.df['cantidad_ci_TOTAL_REPS'].sum(),
+            'ocupacion_total_departamento': self.df['ocupacion_total'].sum(),
+            'porcentaje_ocupacion_departamento': (
+                self.df['ocupacion_total'].sum() / self.df['cantidad_ci_TOTAL_REPS'].sum() * 100
+                if self.df['cantidad_ci_TOTAL_REPS'].sum() > 0 else 0
+            )
+        }
+        
+        return stats
     
-    # Limpiar y estandarizar nombres
-    df['municipio_sede_prestador'] = df['municipio_sede_prestador'].str.upper().str.strip()
-    df['nombre_prestador'] = df['nombre_prestador'].str.strip()
-    df['nombre_sede_prestador'] = df['nombre_sede_prestador'].str.strip()
-    df['nombre_capacidad_instalada'] = df['nombre_capacidad_instalada'].str.strip()
+    def _obtener_estadisticas_ibague(self):
+        """Obtener estadísticas específicas de Ibagué."""
+        df_ibague = self.df[self.df['municipio_sede_prestador'] == 'Ibagué']
+        
+        if df_ibague.empty:
+            return None
+        
+        stats = {}
+        
+        # Por tipo de servicio
+        for tipo_servicio in self.mapeo_servicios.keys():
+            df_servicio = df_ibague[df_ibague['tipo_servicio'] == tipo_servicio]
+            
+            stats[tipo_servicio] = {
+                'capacidad_total': df_servicio['cantidad_ci_TOTAL_REPS'].sum(),
+                'ocupacion_total': df_servicio['ocupacion_total'].sum(),
+                'ocupacion_covid': df_servicio['ocupacion_ci_confirmado_covid19'].sum() + 
+                                 df_servicio['ocupacion_ci_sospechoso_covid19'].sum(),
+                'ocupacion_no_covid': df_servicio['ocupacion_ci_no_covid19'].sum(),
+                'disponible': df_servicio['cantidad_ci_disponibles'].sum(),
+                'prestadores': df_servicio['nombre_prestador'].nunique(),
+                'sedes': df_servicio['nombre_sede_prestador'].nunique()
+            }
+            
+            if stats[tipo_servicio]['capacidad_total'] > 0:
+                stats[tipo_servicio]['porcentaje_ocupacion'] = (
+                    stats[tipo_servicio]['ocupacion_total'] / 
+                    stats[tipo_servicio]['capacidad_total']
+                ) * 100
+            else:
+                stats[tipo_servicio]['porcentaje_ocupacion'] = 0
+        
+        return stats
     
-    # CLASIFICACIÓN PRINCIPAL: CAMAS vs CAMILLAS (para usar en TODOS los análisis)
-    def clasificar_cama_camilla(nombre):
-        nombre = str(nombre).upper()
-        if 'CAMA' in nombre:
-            return 'CAMAS'
-        elif 'CAMILLA' in nombre:
-            return 'CAMILLAS'
+    def _obtener_estadisticas_otros_municipios(self):
+        """Obtener estadísticas de municipios diferentes a Ibagué."""
+        df_otros = self.df[self.df['municipio_sede_prestador'] != 'Ibagué']
+        
+        if df_otros.empty:
+            return None
+        
+        # Agrupar por municipio y tipo de servicio
+        stats_municipios = []
+        
+        for municipio in df_otros['municipio_sede_prestador'].unique():
+            df_municipio = df_otros[df_otros['municipio_sede_prestador'] == municipio]
+            
+            municipio_stats = {
+                'municipio': municipio,
+                'prestadores': df_municipio['nombre_prestador'].nunique(),
+                'sedes': df_municipio['nombre_sede_prestador'].nunique()
+            }
+            
+            # Por tipo de servicio
+            for tipo_servicio in self.mapeo_servicios.keys():
+                df_servicio = df_municipio[df_municipio['tipo_servicio'] == tipo_servicio]
+                
+                capacidad = df_servicio['cantidad_ci_TOTAL_REPS'].sum()
+                ocupacion = df_servicio['ocupacion_total'].sum()
+                
+                municipio_stats[f'{tipo_servicio}_capacidad'] = capacidad
+                municipio_stats[f'{tipo_servicio}_ocupacion'] = ocupacion
+                municipio_stats[f'{tipo_servicio}_porcentaje'] = (
+                    (ocupacion / capacidad * 100) if capacidad > 0 else 0
+                )
+            
+            # Totales del municipio
+            municipio_stats['total_capacidad'] = df_municipio['cantidad_ci_TOTAL_REPS'].sum()
+            municipio_stats['total_ocupacion'] = df_municipio['ocupacion_total'].sum()
+            municipio_stats['total_porcentaje'] = (
+                (municipio_stats['total_ocupacion'] / municipio_stats['total_capacidad'] * 100)
+                if municipio_stats['total_capacidad'] > 0 else 0
+            )
+            
+            stats_municipios.append(municipio_stats)
+        
+        return sorted(stats_municipios, key=lambda x: x['total_capacidad'], reverse=True)
+    
+    def _crear_grafico_tolima_servicios(self):
+        """Crear gráfico de servicios del departamento del Tolima."""
+        try:
+            stats = self._obtener_estadisticas_tolima()
+            
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
+            fig.suptitle('Capacidad y Ocupación Hospitalaria por Servicios - Departamento del Tolima', 
+                        fontsize=16, fontweight='bold', color=COLORS['primary'])
+            
+            # Datos para gráficos
+            servicios = []
+            capacidades = []
+            ocupaciones = []
+            porcentajes = []
+            colores = []
+            
+            for tipo_servicio, info in self.mapeo_servicios.items():
+                if tipo_servicio in stats:
+                    servicios.append(info['nombre'])
+                    capacidades.append(stats[tipo_servicio]['capacidad_total'])
+                    ocupaciones.append(stats[tipo_servicio]['ocupacion_total'])
+                    porcentajes.append(stats[tipo_servicio]['porcentaje_ocupacion'])
+                    colores.append(info['color'])
+            
+            # Gráfico 1: Capacidad vs Ocupación
+            x = np.arange(len(servicios))
+            width = 0.35
+            
+            bars1 = ax1.bar(x - width/2, capacidades, width, label='Capacidad Total', 
+                          color=colores, alpha=0.7)
+            bars2 = ax1.bar(x + width/2, ocupaciones, width, label='Ocupación Actual', 
+                          color=colores, alpha=1.0)
+            
+            ax1.set_title('Capacidad vs Ocupación por Servicio', fontweight='bold')
+            ax1.set_ylabel('Número de Unidades')
+            ax1.set_xlabel('Tipo de Servicio')
+            ax1.set_xticks(x)
+            ax1.set_xticklabels(servicios, rotation=45, ha='right')
+            ax1.legend()
+            ax1.grid(True, alpha=0.3)
+            
+            # Agregar valores en las barras
+            for bar in bars1:
+                height = bar.get_height()
+                if height > 0:
+                    ax1.text(bar.get_x() + bar.get_width()/2., height + 5,
+                           f'{int(height)}', ha='center', va='bottom', fontweight='bold')
+            
+            for bar in bars2:
+                height = bar.get_height()
+                if height > 0:
+                    ax1.text(bar.get_x() + bar.get_width()/2., height + 5,
+                           f'{int(height)}', ha='center', va='bottom', fontweight='bold')
+            
+            # Gráfico 2: Porcentajes de Ocupación
+            bars3 = ax2.bar(servicios, porcentajes, color=colores, alpha=0.8)
+            
+            ax2.set_title('Porcentaje de Ocupación por Servicio', fontweight='bold')
+            ax2.set_ylabel('Porcentaje de Ocupación (%)')
+            ax2.set_xlabel('Tipo de Servicio')
+            ax2.set_xticklabels(servicios, rotation=45, ha='right')
+            
+            # Líneas de referencia
+            ax2.axhline(y=UMBRALES['advertencia'], color='orange', linestyle='--', alpha=0.7, label='Advertencia (70%)')
+            ax2.axhline(y=UMBRALES['critico'], color='red', linestyle='--', alpha=0.7, label='Crítico (90%)')
+            ax2.legend()
+            ax2.grid(True, alpha=0.3)
+            
+            # Agregar valores en las barras
+            for i, (bar, porcentaje) in enumerate(zip(bars3, porcentajes)):
+                height = bar.get_height()
+                ax2.text(bar.get_x() + bar.get_width()/2., height + 1,
+                       f'{porcentaje:.1f}%', ha='center', va='bottom', fontweight='bold')
+                
+                # Colorear según umbral
+                if porcentaje >= UMBRALES['critico']:
+                    bar.set_edgecolor('red')
+                    bar.set_linewidth(3)
+                elif porcentaje >= UMBRALES['advertencia']:
+                    bar.set_edgecolor('orange')
+                    bar.set_linewidth(2)
+            
+            plt.tight_layout()
+            plt.savefig('grafico_tolima_servicios.png', dpi=300, bbox_inches='tight')
+            plt.close()
+            
+            return 'grafico_tolima_servicios.png'
+            
+        except Exception as e:
+            print(f"❌ Error creando gráfico de Tolima: {str(e)}")
+            return None
+    
+    def _crear_grafico_ibague_detallado(self):
+        """Crear gráfico detallado específico de Ibagué."""
+        try:
+            stats = self._obtener_estadisticas_ibague()
+            if not stats:
+                return None
+            
+            fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
+            fig.suptitle('Análisis Detallado de Capacidad Hospitalaria - Ibagué', 
+                        fontsize=16, fontweight='bold', color=COLORS['primary'])
+            
+            # Datos para gráficos
+            servicios = []
+            capacidades = []
+            ocupaciones = []
+            porcentajes = []
+            colores = []
+            
+            for tipo_servicio, info in self.mapeo_servicios.items():
+                if tipo_servicio in stats:
+                    servicios.append(info['nombre'])
+                    capacidades.append(stats[tipo_servicio]['capacidad_total'])
+                    ocupaciones.append(stats[tipo_servicio]['ocupacion_total'])
+                    porcentajes.append(stats[tipo_servicio]['porcentaje_ocupacion'])
+                    colores.append(info['color'])
+            
+            # Gráfico 1: Capacidad vs Ocupación
+            x = np.arange(len(servicios))
+            width = 0.35
+            
+            bars1 = ax1.bar(x - width/2, capacidades, width, label='Capacidad', 
+                          color=colores, alpha=0.7)
+            bars2 = ax1.bar(x + width/2, ocupaciones, width, label='Ocupación', 
+                          color=colores, alpha=1.0)
+            
+            ax1.set_title('Capacidad vs Ocupación', fontweight='bold')
+            ax1.set_ylabel('Número de Unidades')
+            ax1.set_xticks(x)
+            ax1.set_xticklabels(servicios, rotation=45, ha='right')
+            ax1.legend()
+            ax1.grid(True, alpha=0.3)
+            
+            # Valores en barras
+            for bar in bars1:
+                height = bar.get_height()
+                if height > 0:
+                    ax1.text(bar.get_x() + bar.get_width()/2., height + 5,
+                           f'{int(height)}', ha='center', va='bottom', fontsize=10)
+            
+            for bar in bars2:
+                height = bar.get_height()
+                if height > 0:
+                    ax1.text(bar.get_x() + bar.get_width()/2., height + 5,
+                           f'{int(height)}', ha='center', va='bottom', fontsize=10)
+            
+            # Gráfico 2: Porcentajes de Ocupación
+            bars3 = ax2.bar(servicios, porcentajes, color=colores, alpha=0.8)
+            ax2.set_title('Porcentaje de Ocupación', fontweight='bold')
+            ax2.set_ylabel('Porcentaje (%)')
+            ax2.set_xticklabels(servicios, rotation=45, ha='right')
+            ax2.axhline(y=70, color='orange', linestyle='--', alpha=0.7)
+            ax2.axhline(y=90, color='red', linestyle='--', alpha=0.7)
+            ax2.grid(True, alpha=0.3)
+            
+            for bar, porcentaje in zip(bars3, porcentajes):
+                height = bar.get_height()
+                ax2.text(bar.get_x() + bar.get_width()/2., height + 1,
+                       f'{porcentaje:.1f}%', ha='center', va='bottom', fontsize=10)
+            
+            # Gráfico 3: Distribución COVID vs No COVID
+            df_ibague = self.df[self.df['municipio_sede_prestador'] == 'Ibagué']
+            
+            covid_data = []
+            no_covid_data = []
+            
+            for tipo_servicio in self.mapeo_servicios.keys():
+                df_servicio = df_ibague[df_ibague['tipo_servicio'] == tipo_servicio]
+                covid_data.append(stats[tipo_servicio]['ocupacion_covid'])
+                no_covid_data.append(stats[tipo_servicio]['ocupacion_no_covid'])
+            
+            x = np.arange(len(servicios))
+            width = 0.35
+            
+            ax3.bar(x - width/2, covid_data, width, label='COVID-19', color='red', alpha=0.7)
+            ax3.bar(x + width/2, no_covid_data, width, label='No COVID-19', color='blue', alpha=0.7)
+            
+            ax3.set_title('Ocupación: COVID-19 vs No COVID-19', fontweight='bold')
+            ax3.set_ylabel('Pacientes')
+            ax3.set_xticks(x)
+            ax3.set_xticklabels(servicios, rotation=45, ha='right')
+            ax3.legend()
+            ax3.grid(True, alpha=0.3)
+            
+            # Gráfico 4: Prestadores por Servicio
+            prestadores_data = [stats[tipo]['prestadores'] for tipo in self.mapeo_servicios.keys()]
+            
+            ax4.bar(servicios, prestadores_data, color=colores, alpha=0.8)
+            ax4.set_title('Número de Prestadores por Servicio', fontweight='bold')
+            ax4.set_ylabel('Número de Prestadores')
+            ax4.set_xticklabels(servicios, rotation=45, ha='right')
+            ax4.grid(True, alpha=0.3)
+            
+            for i, v in enumerate(prestadores_data):
+                ax4.text(i, v + 0.1, str(v), ha='center', va='bottom', fontweight='bold')
+            
+            plt.tight_layout()
+            plt.savefig('grafico_ibague_detallado.png', dpi=300, bbox_inches='tight')
+            plt.close()
+            
+            return 'grafico_ibague_detallado.png'
+            
+        except Exception as e:
+            print(f"❌ Error creando gráfico de Ibagué: {str(e)}")
+            return None
+    
+    def _crear_grafico_otros_municipios(self):
+        """Crear gráfico de otros municipios (excluyendo Ibagué)."""
+        try:
+            stats_municipios = self._obtener_estadisticas_otros_municipios()
+            if not stats_municipios:
+                return None
+            
+            # Tomar los 15 municipios con mayor capacidad
+            top_municipios = stats_municipios[:15]
+            
+            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(16, 12))
+            fig.suptitle('Capacidad Hospitalaria - Otros Municipios del Tolima (Top 15)', 
+                        fontsize=16, fontweight='bold', color=COLORS['primary'])
+            
+            municipios = [m['municipio'] for m in top_municipios]
+            capacidades = [m['total_capacidad'] for m in top_municipios]
+            ocupaciones = [m['total_ocupacion'] for m in top_municipios]
+            porcentajes = [m['total_porcentaje'] for m in top_municipios]
+            
+            # Gráfico 1: Capacidad vs Ocupación
+            x = np.arange(len(municipios))
+            width = 0.35
+            
+            bars1 = ax1.bar(x - width/2, capacidades, width, label='Capacidad Total', 
+                          color=COLORS['secondary'], alpha=0.7)
+            bars2 = ax1.bar(x + width/2, ocupaciones, width, label='Ocupación Actual', 
+                          color=COLORS['primary'], alpha=0.8)
+            
+            ax1.set_title('Capacidad vs Ocupación por Municipio', fontweight='bold')
+            ax1.set_ylabel('Número de Unidades')
+            ax1.set_xlabel('Municipio')
+            ax1.set_xticks(x)
+            ax1.set_xticklabels(municipios, rotation=45, ha='right')
+            ax1.legend()
+            ax1.grid(True, alpha=0.3)
+            
+            # Valores en barras
+            for bar in bars1:
+                height = bar.get_height()
+                if height > 0:
+                    ax1.text(bar.get_x() + bar.get_width()/2., height + 1,
+                           f'{int(height)}', ha='center', va='bottom', fontsize=8)
+            
+            # Gráfico 2: Porcentajes de Ocupación
+            bars3 = ax2.bar(municipios, porcentajes, alpha=0.8)
+            
+            # Colorear según umbrales
+            for i, (bar, porcentaje) in enumerate(zip(bars3, porcentajes)):
+                if porcentaje >= UMBRALES['critico']:
+                    bar.set_color(COLORS['danger'])
+                elif porcentaje >= UMBRALES['advertencia']:
+                    bar.set_color(COLORS['warning'])
+                else:
+                    bar.set_color(COLORS['success'])
+                
+                # Agregar valor
+                ax2.text(bar.get_x() + bar.get_width()/2., bar.get_height() + 1,
+                       f'{porcentaje:.1f}%', ha='center', va='bottom', fontsize=8)
+            
+            ax2.set_title('Porcentaje de Ocupación por Municipio', fontweight='bold')
+            ax2.set_ylabel('Porcentaje de Ocupación (%)')
+            ax2.set_xlabel('Municipio')
+            ax2.set_xticklabels(municipios, rotation=45, ha='right')
+            
+            # Líneas de referencia
+            ax2.axhline(y=UMBRALES['advertencia'], color='orange', linestyle='--', alpha=0.7, label='Advertencia (70%)')
+            ax2.axhline(y=UMBRALES['critico'], color='red', linestyle='--', alpha=0.7, label='Crítico (90%)')
+            ax2.legend()
+            ax2.grid(True, alpha=0.3)
+            
+            plt.tight_layout()
+            plt.savefig('grafico_otros_municipios.png', dpi=300, bbox_inches='tight')
+            plt.close()
+            
+            return 'grafico_otros_municipios.png'
+            
+        except Exception as e:
+            print(f"❌ Error creando gráfico de otros municipios: {str(e)}")
+            return None
+    
+    def _crear_tabla_detallada_ibague(self):
+        """Crear tabla detallada de Ibagué por prestador y servicio."""
+        df_ibague = self.df[self.df['municipio_sede_prestador'] == 'Ibagué']
+        
+        if df_ibague.empty:
+            return None
+        
+        tabla_data = []
+        
+        # Encabezados
+        headers = [
+            'Prestador/Sede',
+            'Observación\nCap./Ocup./(%)',
+            'Cuidado Crítico\nCap./Ocup./(%)',
+            'Hospitalización\nCap./Ocup./(%)',
+            'Total\nCap./Ocup./(%)'
+        ]
+        
+        # Datos por prestador
+        for prestador in df_ibague['nombre_prestador'].unique():
+            df_prestador = df_ibague[df_ibague['nombre_prestador'] == prestador]
+            
+            # Fila del prestador (totales)
+            prestador_row = [f"📋 {prestador}"]
+            
+            total_cap = 0
+            total_ocup = 0
+            
+            for tipo_servicio in ['observacion', 'cuidado_critico', 'hospitalizacion']:
+                df_servicio = df_prestador[df_prestador['tipo_servicio'] == tipo_servicio]
+                cap = df_servicio['cantidad_ci_TOTAL_REPS'].sum()
+                ocup = df_servicio['ocupacion_total'].sum()
+                perc = (ocup / cap * 100) if cap > 0 else 0
+                
+                prestador_row.append(f"{cap}/{ocup}/{perc:.1f}%")
+                total_cap += cap
+                total_ocup += ocup
+            
+            total_perc = (total_ocup / total_cap * 100) if total_cap > 0 else 0
+            prestador_row.append(f"{total_cap}/{total_ocup}/{total_perc:.1f}%")
+            tabla_data.append(prestador_row)
+            
+            # Filas por sede
+            for sede in df_prestador['nombre_sede_prestador'].unique():
+                df_sede = df_prestador[df_prestador['nombre_sede_prestador'] == sede]
+                
+                sede_row = [f"  └─ {sede}"]
+                
+                sede_cap = 0
+                sede_ocup = 0
+                
+                for tipo_servicio in ['observacion', 'cuidado_critico', 'hospitalizacion']:
+                    df_servicio = df_sede[df_sede['tipo_servicio'] == tipo_servicio]
+                    cap = df_servicio['cantidad_ci_TOTAL_REPS'].sum()
+                    ocup = df_servicio['ocupacion_total'].sum()
+                    perc = (ocup / cap * 100) if cap > 0 else 0
+                    
+                    if cap > 0:
+                        sede_row.append(f"{cap}/{ocup}/{perc:.1f}%")
+                    else:
+                        sede_row.append("-")
+                    
+                    sede_cap += cap
+                    sede_ocup += ocup
+                
+                sede_perc = (sede_ocup / sede_cap * 100) if sede_cap > 0 else 0
+                if sede_cap > 0:
+                    sede_row.append(f"{sede_cap}/{sede_ocup}/{sede_perc:.1f}%")
+                else:
+                    sede_row.append("-")
+                
+                tabla_data.append(sede_row)
+        
+        return [headers] + tabla_data
+    
+    def _crear_tabla_detallada_municipios(self):
+        """Crear tabla detallada de todos los municipios."""
+        stats_municipios = self._obtener_estadisticas_otros_municipios()
+        
+        if not stats_municipios:
+            return None
+        
+        # Encabezados
+        headers = [
+            'Municipio',
+            'Prestadores',
+            'Sedes',
+            'Observación\nCap./Ocup./(%)',
+            'Cuidado Crítico\nCap./Ocup./(%)',
+            'Hospitalización\nCap./Ocup./(%)',
+            'Total General\nCap./Ocup./(%)',
+            'Estado'
+        ]
+        
+        tabla_data = [headers]
+        
+        for municipio_stats in stats_municipios:
+            # Determinar estado según porcentaje
+            porcentaje = municipio_stats['total_porcentaje']
+            if porcentaje >= UMBRALES['critico']:
+                estado = "🔴 CRÍTICO"
+            elif porcentaje >= UMBRALES['advertencia']:
+                estado = "🟡 ADVERTENCIA"
+            else:
+                estado = "🟢 NORMAL"
+            
+            fila = [
+                municipio_stats['municipio'],
+                str(municipio_stats['prestadores']),
+                str(municipio_stats['sedes']),
+                f"{municipio_stats['observacion_capacidad']}/{municipio_stats['observacion_ocupacion']}/{municipio_stats['observacion_porcentaje']:.1f}%",
+                f"{municipio_stats['cuidado_critico_capacidad']}/{municipio_stats['cuidado_critico_ocupacion']}/{municipio_stats['cuidado_critico_porcentaje']:.1f}%",
+                f"{municipio_stats['hospitalizacion_capacidad']}/{municipio_stats['hospitalizacion_ocupacion']}/{municipio_stats['hospitalizacion_porcentaje']:.1f}%",
+                f"{municipio_stats['total_capacidad']}/{municipio_stats['total_ocupacion']}/{municipio_stats['total_porcentaje']:.1f}%",
+                estado
+            ]
+            
+            tabla_data.append(fila)
+        
+        return tabla_data
+    
+    def generar_informe_pdf(self, archivo_salida=None):
+        """Generar el informe PDF con la nueva estructura."""
+        if archivo_salida is None:
+            timestamp = self.fecha_procesamiento.strftime("%Y%m%d_%H%M%S")
+            archivo_salida = f"informe_tolima_servicios_{timestamp}.pdf"
+        
+        print(f"📄 Generando informe PDF: {archivo_salida}")
+        
+        # Configurar documento
+        doc = SimpleDocTemplate(archivo_salida, pagesize=A4,
+                              rightMargin=0.5*inch, leftMargin=0.5*inch,
+                              topMargin=0.5*inch, bottomMargin=0.5*inch)
+        
+        # Elementos del documento
+        elementos = []
+        
+        # Estilos
+        estilos = getSampleStyleSheet()
+        
+        titulo_principal = ParagraphStyle(
+            'TituloPrincipal',
+            parent=estilos['Title'],
+            fontSize=18,
+            spaceAfter=30,
+            textColor=colors.HexColor(COLORS['primary']),
+            alignment=TA_CENTER,
+            fontName='Helvetica-Bold'
+        )
+        
+        titulo_seccion = ParagraphStyle(
+            'TituloSeccion',
+            parent=estilos['Heading1'],
+            fontSize=14,
+            spaceAfter=15,
+            textColor=colors.HexColor(COLORS['primary']),
+            fontName='Helvetica-Bold'
+        )
+        
+        titulo_subseccion = ParagraphStyle(
+            'TituloSubseccion',
+            parent=estilos['Heading2'],
+            fontSize=12,
+            spaceAfter=10,
+            textColor=colors.HexColor(COLORS['accent']),
+            fontName='Helvetica-Bold'
+        )
+        
+        texto_normal = ParagraphStyle(
+            'TextoNormal',
+            parent=estilos['Normal'],
+            fontSize=10,
+            spaceAfter=10,
+            alignment=TA_JUSTIFY
+        )
+        
+        # ======================================================================
+        # PORTADA
+        # ======================================================================
+        elementos.append(Spacer(1, 1*inch))
+        
+        elementos.append(Paragraph("INFORME DE CAPACIDAD HOSPITALARIA", titulo_principal))
+        elementos.append(Paragraph("DEPARTAMENTO DEL TOLIMA", titulo_principal))
+        elementos.append(Paragraph("Análisis por Tipos de Servicio", titulo_seccion))
+        
+        elementos.append(Spacer(1, 0.5*inch))
+        
+        fecha_str = self.fecha_procesamiento.strftime("%d de %B de %Y")
+        elementos.append(Paragraph(f"<b>Fecha de Procesamiento:</b> {fecha_str}", texto_normal))
+        elementos.append(Paragraph(f"<b>Secretaría de Salud del Tolima</b>", texto_normal))
+        elementos.append(Paragraph(f"<b>Sistema de Monitoreo Hospitalario</b>", texto_normal))
+        
+        elementos.append(PageBreak())
+        
+        # ======================================================================
+        # 1. RESUMEN EJECUTIVO DEL TOLIMA
+        # ======================================================================
+        elementos.append(Paragraph("1. RESUMEN EJECUTIVO - DEPARTAMENTO DEL TOLIMA", titulo_seccion))
+        
+        stats_tolima = self._obtener_estadisticas_tolima()
+        
+        elementos.append(Paragraph("📊 <b>Estadísticas Generales del Departamento</b>", titulo_subseccion))
+        
+        resumen_texto = f"""
+        <b>Cobertura Territorial:</b><br/>
+        • Total de municipios con reporte: {stats_tolima['general']['total_municipios']}<br/>
+        • Prestadores de salud activos: {stats_tolima['general']['total_prestadores']}<br/>
+        • Sedes hospitalarias registradas: {stats_tolima['general']['total_sedes']}<br/><br/>
+        
+        <b>Capacidad Hospitalaria Departamental:</b><br/>
+        • Capacidad total instalada: {stats_tolima['general']['capacidad_total_departamento']} unidades<br/>
+        • Ocupación actual: {stats_tolima['general']['ocupacion_total_departamento']} pacientes<br/>
+        • Porcentaje de ocupación: {stats_tolima['general']['porcentaje_ocupacion_departamento']:.1f}%<br/><br/>
+        """
+        
+        elementos.append(Paragraph(resumen_texto, texto_normal))
+        
+        # Estadísticas por tipo de servicio
+        elementos.append(Paragraph("🏥 <b>Análisis por Tipos de Servicio</b>", titulo_subseccion))
+        
+        for tipo_servicio, info in self.mapeo_servicios.items():
+            if tipo_servicio in stats_tolima:
+                stats = stats_tolima[tipo_servicio]
+                
+                # Determinar estado
+                porcentaje = stats['porcentaje_ocupacion']
+                if porcentaje >= UMBRALES['critico']:
+                    estado = "🔴 CRÍTICO"
+                    estado_desc = "requiere atención inmediata"
+                elif porcentaje >= UMBRALES['advertencia']:
+                    estado = "🟡 ADVERTENCIA"
+                    estado_desc = "requiere monitoreo"
+                else:
+                    estado = "🟢 NORMAL"
+                    estado_desc = "funcionando dentro de parámetros normales"
+                
+                servicio_texto = f"""
+                <b>{info['nombre']} - {estado}</b><br/>
+                • Capacidad instalada: {stats['capacidad_total']} unidades<br/>
+                • Ocupación actual: {stats['ocupacion_total']} pacientes ({stats['porcentaje_ocupacion']:.1f}%)<br/>
+                • Pacientes COVID-19: {stats['ocupacion_covid']}<br/>
+                • Pacientes No COVID-19: {stats['ocupacion_no_covid']}<br/>
+                • Unidades disponibles: {stats['disponible']}<br/>
+                • Estado: <i>{estado_desc}</i><br/><br/>
+                """
+                
+                elementos.append(Paragraph(servicio_texto, texto_normal))
+        
+        # Gráfico del Tolima
+        grafico_tolima = self._crear_grafico_tolima_servicios()
+        if grafico_tolima and os.path.exists(grafico_tolima):
+            elementos.append(Spacer(1, 0.2*inch))
+            elementos.append(Image(grafico_tolima, width=7*inch, height=4*inch))
+            elementos.append(Spacer(1, 0.2*inch))
+        
+        elementos.append(PageBreak())
+        
+        # ======================================================================
+        # 2. ANÁLISIS DETALLADO DE IBAGUÉ
+        # ======================================================================
+        elementos.append(Paragraph("2. ANÁLISIS DETALLADO - IBAGUÉ (CAPITAL)", titulo_seccion))
+        
+        stats_ibague = self._obtener_estadisticas_ibague()
+        
+        if stats_ibague:
+            elementos.append(Paragraph("🏛️ <b>Ibagué como Centro de Referencia Departamental</b>", titulo_subseccion))
+            
+            # Calcular totales de Ibagué
+            total_cap_ibague = sum(stats_ibague[tipo]['capacidad_total'] for tipo in self.mapeo_servicios.keys())
+            total_ocup_ibague = sum(stats_ibague[tipo]['ocupacion_total'] for tipo in self.mapeo_servicios.keys())
+            porcentaje_ibague = (total_ocup_ibague / total_cap_ibague * 100) if total_cap_ibague > 0 else 0
+            
+            participacion_capacidad = (total_cap_ibague / stats_tolima['general']['capacidad_total_departamento'] * 100)
+            participacion_ocupacion = (total_ocup_ibague / stats_tolima['general']['ocupacion_total_departamento'] * 100)
+            
+            resumen_ibague = f"""
+            <b>Participación de Ibagué en el Sistema Departamental:</b><br/>
+            • Participación en capacidad total: {participacion_capacidad:.1f}% del departamento<br/>
+            • Participación en ocupación: {participacion_ocupacion:.1f}% del departamento<br/>
+            • Capacidad total de Ibagué: {total_cap_ibague} unidades<br/>
+            • Ocupación actual: {total_ocup_ibague} pacientes ({porcentaje_ibague:.1f}%)<br/><br/>
+            """
+            
+            elementos.append(Paragraph(resumen_ibague, texto_normal))
+            
+            # Análisis por servicio en Ibagué
+            elementos.append(Paragraph("📋 <b>Detalle por Tipo de Servicio en Ibagué</b>", titulo_subseccion))
+            
+            for tipo_servicio, info in self.mapeo_servicios.items():
+                if tipo_servicio in stats_ibague:
+                    stats = stats_ibague[tipo_servicio]
+                    
+                    participacion_servicio = (stats['capacidad_total'] / total_cap_ibague * 100) if total_cap_ibague > 0 else 0
+                    
+                    servicio_ibague = f"""
+                    <b>{info['nombre']}:</b><br/>
+                    • Prestadores: {stats['prestadores']} | Sedes: {stats['sedes']}<br/>
+                    • Capacidad: {stats['capacidad_total']} unidades ({participacion_servicio:.1f}% del total de Ibagué)<br/>
+                    • Ocupación: {stats['ocupacion_total']} pacientes ({stats['porcentaje_ocupacion']:.1f}%)<br/>
+                    • COVID-19: {stats['ocupacion_covid']} | No COVID-19: {stats['ocupacion_no_covid']}<br/>
+                    • Disponibles: {stats['disponible']} unidades<br/><br/>
+                    """
+                    
+                    elementos.append(Paragraph(servicio_ibague, texto_normal))
+            
+            # Gráfico detallado de Ibagué
+            grafico_ibague = self._crear_grafico_ibague_detallado()
+            if grafico_ibague and os.path.exists(grafico_ibague):
+                elementos.append(Spacer(1, 0.2*inch))
+                elementos.append(Image(grafico_ibague, width=7*inch, height=5.5*inch))
+                elementos.append(Spacer(1, 0.2*inch))
+            
+            # Tabla detallada de Ibagué
+            tabla_ibague = self._crear_tabla_detallada_ibague()
+            if tabla_ibague:
+                elementos.append(Paragraph("📊 <b>Tabla Detallada por Prestador y Sede - Ibagué</b>", titulo_subseccion))
+                
+                # Crear tabla para PDF
+                tabla_style = TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor(COLORS['primary'])),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (-1, 0), 8),
+                    ('FONTSIZE', (0, 1), (-1, -1), 7),
+                    ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                    ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                    ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ])
+                
+                tabla_pdf = Table(tabla_ibague, repeatRows=1)
+                tabla_pdf.setStyle(tabla_style)
+                elementos.append(tabla_pdf)
+        
+        elementos.append(PageBreak())
+        
+        # ======================================================================
+        # 3. ANÁLISIS DE OTROS MUNICIPIOS
+        # ======================================================================
+        elementos.append(Paragraph("3. ANÁLISIS DE OTROS MUNICIPIOS DEL TOLIMA", titulo_seccion))
+        
+        stats_otros = self._obtener_estadisticas_otros_municipios()
+        
+        if stats_otros:
+            # Resumen de otros municipios
+            total_otros_cap = sum(m['total_capacidad'] for m in stats_otros)
+            total_otros_ocup = sum(m['total_ocupacion'] for m in stats_otros)
+            porcentaje_otros = (total_otros_ocup / total_otros_cap * 100) if total_otros_cap > 0 else 0
+            
+            municipios_criticos = [m for m in stats_otros if m['total_porcentaje'] >= UMBRALES['critico']]
+            municipios_advertencia = [m for m in stats_otros if UMBRALES['advertencia'] <= m['total_porcentaje'] < UMBRALES['critico']]
+            
+            resumen_otros = f"""
+            <b>Panorama de Municipios (Excluyendo Ibagué):</b><br/>
+            • Total de municipios analizados: {len(stats_otros)}<br/>
+            • Capacidad total combinada: {total_otros_cap} unidades<br/>
+            • Ocupación total: {total_otros_ocup} pacientes ({porcentaje_otros:.1f}%)<br/>
+            • Municipios en estado crítico (≥90%): {len(municipios_criticos)}<br/>
+            • Municipios en advertencia (70-89%): {len(municipios_advertencia)}<br/><br/>
+            """
+            
+            elementos.append(Paragraph(resumen_otros, texto_normal))
+            
+            # Alertas críticas
+            if municipios_criticos:
+                elementos.append(Paragraph("🚨 <b>MUNICIPIOS EN ESTADO CRÍTICO</b>", titulo_subseccion))
+                
+                for municipio in municipios_criticos:
+                    alerta_texto = f"""
+                    <b>{municipio['municipio']}</b> - {municipio['total_porcentaje']:.1f}% de ocupación<br/>
+                    • Capacidad: {municipio['total_capacidad']} | Ocupación: {municipio['total_ocupacion']}<br/>
+                    • Prestadores: {municipio['prestadores']} | Sedes: {municipio['sedes']}<br/><br/>
+                    """
+                    elementos.append(Paragraph(alerta_texto, texto_normal))
+            
+            # Gráfico de otros municipios
+            grafico_otros = self._crear_grafico_otros_municipios()
+            if grafico_otros and os.path.exists(grafico_otros):
+                elementos.append(Spacer(1, 0.2*inch))
+                elementos.append(Image(grafico_otros, width=7*inch, height=5.5*inch))
+                elementos.append(Spacer(1, 0.2*inch))
+            
+            # Tabla detallada de municipios
+            tabla_municipios = self._crear_tabla_detallada_municipios()
+            if tabla_municipios:
+                elementos.append(Paragraph("📊 <b>Tabla Detallada de Todos los Municipios</b>", titulo_subseccion))
+                
+                tabla_style = TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor(COLORS['primary'])),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (-1, 0), 7),
+                    ('FONTSIZE', (0, 1), (-1, -1), 6),
+                    ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                    ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                    ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ])
+                
+                # Colorear filas según estado
+                for i, fila in enumerate(tabla_municipios[1:], 1):
+                    if "CRÍTICO" in fila[-1]:
+                        tabla_style.add('BACKGROUND', (0, i), (-1, i), colors.HexColor('#FFEBEE'))
+                    elif "ADVERTENCIA" in fila[-1]:
+                        tabla_style.add('BACKGROUND', (0, i), (-1, i), colors.HexColor('#FFF3E0'))
+                
+                tabla_pdf = Table(tabla_municipios, repeatRows=1)
+                tabla_pdf.setStyle(tabla_style)
+                elementos.append(tabla_pdf)
+        
+        # ======================================================================
+        # 4. CONCLUSIONES Y RECOMENDACIONES
+        # ======================================================================
+        elementos.append(PageBreak())
+        elementos.append(Paragraph("4. CONCLUSIONES Y RECOMENDACIONES", titulo_seccion))
+        
+        # Generar conclusiones automáticas
+        conclusiones = self._generar_conclusiones(stats_tolima, stats_ibague, stats_otros)
+        elementos.append(Paragraph(conclusiones, texto_normal))
+        
+        # Pie de página
+        elementos.append(Spacer(1, 1*inch))
+        pie_texto = f"""
+        <b>Informe generado por:</b> Sistema de Monitoreo Hospitalario<br/>
+        <b>Secretaría de Salud del Tolima</b><br/>
+        <b>Fecha y hora:</b> {self.fecha_procesamiento.strftime("%d/%m/%Y %H:%M:%S")}<br/>
+        <b>Desarrollado por:</b> Ing. José Miguel Santos
+        """
+        elementos.append(Paragraph(pie_texto, texto_normal))
+        
+        # Construir documento
+        try:
+            doc.build(elementos)
+            print(f"✅ Informe PDF generado exitosamente: {archivo_salida}")
+            return archivo_salida
+        except Exception as e:
+            print(f"❌ Error generando PDF: {str(e)}")
+            return None
+    
+    def _generar_conclusiones(self, stats_tolima, stats_ibague, stats_otros):
+        """Generar conclusiones automáticas basadas en los datos."""
+        conclusiones = []
+        
+        # Análisis departamental
+        porcentaje_dept = stats_tolima['general']['porcentaje_ocupacion_departamento']
+        if porcentaje_dept >= UMBRALES['critico']:
+            conclusiones.append("🔴 <b>SITUACIÓN CRÍTICA DEPARTAMENTAL:</b> El Tolima presenta una ocupación hospitalaria crítica que requiere activación de protocolos de emergencia y redistribución de pacientes.")
+        elif porcentaje_dept >= UMBRALES['advertencia']:
+            conclusiones.append("🟡 <b>SITUACIÓN DE ADVERTENCIA:</b> El departamento del Tolima requiere monitoreo constante y preparación de medidas preventivas.")
         else:
-            return 'OTROS'
-    
-    df['tipo_general'] = df['nombre_capacidad_instalada'].apply(clasificar_cama_camilla)
-    
-    # CLASIFICACIÓN ESPECÍFICA con identificación CAMAS/CAMILLAS
-    def categorizar_capacidad_con_tipo(nombre):
-        nombre = str(nombre).upper()
-        tipo_base = "CAMAS" if 'CAMA' in nombre else "CAMILLAS" if 'CAMILLA' in nombre else "OTROS"
+            conclusiones.append("🟢 <b>SITUACIÓN CONTROLADA:</b> El sistema hospitalario del Tolima opera dentro de parámetros normales.")
         
-        if 'CAMA' in nombre and 'INTENSIV' in nombre and 'ADULT' in nombre:
-            return f'{tipo_base} - UCI Adultos'
-        elif 'CAMA' in nombre and 'INTENSIV' in nombre and 'PEDIÁTRIC' in nombre:
-            return f'{tipo_base} - UCI Pediátrica'
-        elif 'CAMA' in nombre and 'INTERMEDI' in nombre and 'ADULT' in nombre:
-            return f'{tipo_base} - Cuidado Intermedio Adultos'
-        elif 'CAMA' in nombre and 'INTERMEDI' in nombre and 'PEDIÁTRIC' in nombre:
-            return f'{tipo_base} - Cuidado Intermedio Pediátrico'
-        elif 'CAMA' in nombre and 'ADULT' in nombre:
-            return f'{tipo_base} - Hospitalización Adultos'
-        elif 'CAMA' in nombre and 'PEDIÁTRIC' in nombre:
-            return f'{tipo_base} - Hospitalización Pediátrica'
-        elif 'CAMILLA' in nombre and 'OBSERVACIÓN' in nombre and 'ADULT' in nombre and 'HOMBRE' in nombre:
-            return f'{tipo_base} - Observación Adultos Hombres'
-        elif 'CAMILLA' in nombre and 'OBSERVACIÓN' in nombre and 'ADULT' in nombre and 'MUJER' in nombre:
-            return f'{tipo_base} - Observación Adultos Mujeres'
-        elif 'CAMILLA' in nombre and 'OBSERVACIÓN' in nombre and 'PEDIÁTRIC' in nombre:
-            return f'{tipo_base} - Observación Pediátrica'
-        else:
-            return f'{tipo_base} - {nombre}'
-    
-    df['categoria_con_tipo'] = df['nombre_capacidad_instalada'].apply(categorizar_capacidad_con_tipo)
-    
-    # Para mantener compatibilidad
-    df['categoria_especifica'] = df['categoria_con_tipo'].str.split(' - ').str[1]
-    
-    # Crear identificadores únicos
-    df['prestador_sede'] = df['nombre_prestador'] + " - " + df['nombre_sede_prestador']
-    df['sede_id'] = df['nombre_prestador'] + "_" + df['numero_sede'].astype(str)
-    
-    # Tipo de institución
-    df['tipo_institucion'] = df['naturaleza_juridica'].apply(
-        lambda x: 'Pública' if 'Pública' in str(x) else 'Privada'
-    )
-    
-    print(f"✅ Datos procesados: {len(df)} registros")
-    print(f"   📍 {df['municipio_sede_prestador'].nunique()} municipios")
-    print(f"   🏥 {df['nombre_prestador'].nunique()} prestadores")
-    print(f"   🏢 {df['sede_id'].nunique()} sedes")
-    print(f"   🛏️  CAMAS: {len(df[df['tipo_general'] == 'CAMAS'])}, CAMILLAS: {len(df[df['tipo_general'] == 'CAMILLAS'])}")
-    print(f"   📋 {df['categoria_con_tipo'].nunique()} tipos específicos (con distinción CAMAS/CAMILLAS)")
-    
-    return df
+        # Análisis por servicios
+        for tipo_servicio, info in self.mapeo_servicios.items():
+            if tipo_servicio in stats_tolima:
+                porcentaje = stats_tolima[tipo_servicio]['porcentaje_ocupacion']
+                if porcentaje >= UMBRALES['critico']:
+                    conclusiones.append(f"⚠️ El servicio de <b>{info['nombre']}</b> presenta ocupación crítica ({porcentaje:.1f}%) y requiere atención inmediata.")
+        
+        # Análisis de Ibagué
+        if stats_ibague:
+            total_cap_ibague = sum(stats_ibague[tipo]['capacidad_total'] for tipo in self.mapeo_servicios.keys())
+            participacion = (total_cap_ibague / stats_tolima['general']['capacidad_total_departamento'] * 100)
+            conclusiones.append(f"🏛️ <b>PAPEL DE IBAGUÉ:</b> Como capital concentra el {participacion:.1f}% de la capacidad hospitalaria departamental, siendo el principal centro de referencia.")
+        
+        # Análisis de municipios
+        if stats_otros:
+            municipios_criticos = [m for m in stats_otros if m['total_porcentaje'] >= UMBRALES['critico']]
+            if municipios_criticos:
+                nombres = ", ".join([m['municipio'] for m in municipios_criticos[:3]])
+                if len(municipios_criticos) > 3:
+                    nombres += f" y {len(municipios_criticos)-3} más"
+                conclusiones.append(f"🚨 <b>MUNICIPIOS CRÍTICOS:</b> {nombres} requieren apoyo inmediato de la red departamental.")
+        
+        # Recomendaciones
+        recomendaciones = [
+            "📋 <b>RECOMENDACIONES INMEDIATAS:</b>",
+            "• Activar protocolos de referencia y contrarreferencia entre municipios",
+            "• Fortalecer la coordinación entre Ibagué y municipios periféricos",
+            "• Implementar monitoreo en tiempo real de ocupación por servicios",
+            "• Preparar planes de contingencia para redistribución de pacientes",
+            "• Reforzar personal médico en servicios con mayor ocupación"
+        ]
+        
+        return "<br/>".join(conclusiones + ["<br/>"] + recomendaciones)
 
-def calcular_estadisticas_optimizadas(df):
-    """Calcula estadísticas con distinción CAMAS/CAMILLAS en todos los análisis"""
-    print("📈 Calculando estadísticas optimizadas...")
-    
-    fecha = df['fecha_registro'].dropna().iloc[0] if not df['fecha_registro'].dropna().empty else "N/A"
-    
-    # ===== 1. RESUMEN GENERAL CAMAS vs CAMILLAS =====
-    resumen_camas_camillas = df.groupby('tipo_general').agg({
-        'cantidad_ci_TOTAL_REPS': 'sum',
-        'ocupacion_total': 'sum',
-        'cantidad_ci_disponibles': 'sum',
-        'municipio_sede_prestador': 'nunique',
-        'nombre_prestador': 'nunique',
-        'sede_id': 'nunique'
-    }).reset_index()
-    
-    resumen_camas_camillas['porcentaje_ocupacion'] = np.where(
-        resumen_camas_camillas['cantidad_ci_TOTAL_REPS'] > 0,
-        (resumen_camas_camillas['ocupacion_total'] / resumen_camas_camillas['cantidad_ci_TOTAL_REPS']) * 100,
-        0
-    )
-    
-    # ===== 2. ANÁLISIS POR TIPOS ESPECÍFICOS CON DISTINCIÓN CAMAS/CAMILLAS =====
-    capacidad_con_tipo = df.groupby('categoria_con_tipo').agg({
-        'cantidad_ci_TOTAL_REPS': 'sum',
-        'ocupacion_total': 'sum',
-        'cantidad_ci_disponibles': 'sum',
-        'municipio_sede_prestador': 'nunique',
-        'nombre_prestador': 'nunique',
-        'sede_id': 'nunique'
-    }).reset_index()
-    
-    capacidad_con_tipo['porcentaje_ocupacion'] = np.where(
-        capacidad_con_tipo['cantidad_ci_TOTAL_REPS'] > 0,
-        (capacidad_con_tipo['ocupacion_total'] / capacidad_con_tipo['cantidad_ci_TOTAL_REPS']) * 100,
-        0
-    )
-    
-    capacidad_con_tipo = capacidad_con_tipo.sort_values('cantidad_ci_TOTAL_REPS', ascending=False)
-    
-    # ===== 3. RESUMEN TERRITORIAL COMPLETO =====
-    tolima_general = {
-        'capacidad': int(df['cantidad_ci_TOTAL_REPS'].sum()),
-        'ocupada': int(df['ocupacion_total'].sum()),
-        'disponible': int(df['cantidad_ci_disponibles'].sum()),
-        'porcentaje': round((df['ocupacion_total'].sum() / df['cantidad_ci_TOTAL_REPS'].sum() * 100), 1) 
-                     if df['cantidad_ci_TOTAL_REPS'].sum() > 0 else 0
-    }
-    
-    # TODOS los municipios
-    municipios_completo = df.groupby('municipio_sede_prestador').agg({
-        'cantidad_ci_TOTAL_REPS': 'sum',
-        'ocupacion_total': 'sum',
-        'cantidad_ci_disponibles': 'sum',
-        'nombre_prestador': 'nunique',
-        'sede_id': 'nunique',
-        'categoria_con_tipo': 'nunique'
-    }).reset_index()
-    
-    municipios_completo.rename(columns={
-        'nombre_prestador': 'num_prestadores',
-        'sede_id': 'num_sedes',
-        'categoria_con_tipo': 'tipos_capacidad'
-    }, inplace=True)
-    
-    municipios_completo['porcentaje_ocupacion'] = np.where(
-        municipios_completo['cantidad_ci_TOTAL_REPS'] > 0,
-        (municipios_completo['ocupacion_total'] / municipios_completo['cantidad_ci_TOTAL_REPS']) * 100,
-        0
-    )
-    
-    municipios_completo = municipios_completo.sort_values('cantidad_ci_TOTAL_REPS', ascending=False)
-    
-    # ===== 4. ANÁLISIS DETALLADO POR PRESTADOR (DENTRO DE MUNICIPIOS) =====
-    prestadores_detallado = df.groupby(['municipio_sede_prestador', 'nombre_prestador', 'tipo_institucion']).agg({
-        'cantidad_ci_TOTAL_REPS': 'sum',
-        'ocupacion_total': 'sum',
-        'cantidad_ci_disponibles': 'sum',
-        'sede_id': 'nunique',
-        'categoria_con_tipo': 'nunique'
-    }).reset_index()
-    
-    prestadores_detallado.rename(columns={
-        'sede_id': 'num_sedes',
-        'categoria_con_tipo': 'tipos_capacidad'
-    }, inplace=True)
-    
-    prestadores_detallado['porcentaje_ocupacion'] = np.where(
-        prestadores_detallado['cantidad_ci_TOTAL_REPS'] > 0,
-        (prestadores_detallado['ocupacion_total'] / prestadores_detallado['cantidad_ci_TOTAL_REPS']) * 100,
-        0
-    )
-    
-    # ===== 5. MATRIZ MUNICIPIO × TIPO CON CAMAS/CAMILLAS =====
-    matriz_municipio_tipo = df.groupby(['municipio_sede_prestador', 'categoria_con_tipo']).agg({
-        'cantidad_ci_TOTAL_REPS': 'sum',
-        'ocupacion_total': 'sum',
-        'cantidad_ci_disponibles': 'sum',
-        'nombre_prestador': 'nunique',
-        'sede_id': 'nunique'
-    }).reset_index()
-    
-    matriz_municipio_tipo['porcentaje_ocupacion'] = np.where(
-        matriz_municipio_tipo['cantidad_ci_TOTAL_REPS'] > 0,
-        (matriz_municipio_tipo['ocupacion_total'] / matriz_municipio_tipo['cantidad_ci_TOTAL_REPS']) * 100,
-        0
-    )
-    
-    # ===== 6. SEDES ESPECÍFICAS DETALLADAS =====
-    sedes_detallado = df.groupby([
-        'municipio_sede_prestador', 'nombre_prestador', 'nombre_sede_prestador', 
-        'numero_sede', 'categoria_con_tipo', 'tipo_institucion'
-    ]).agg({
-        'cantidad_ci_TOTAL_REPS': 'sum',
-        'ocupacion_total': 'sum',
-        'cantidad_ci_disponibles': 'sum'
-    }).reset_index()
-    
-    sedes_detallado['porcentaje_ocupacion'] = np.where(
-        sedes_detallado['cantidad_ci_TOTAL_REPS'] > 0,
-        (sedes_detallado['ocupacion_total'] / sedes_detallado['cantidad_ci_TOTAL_REPS']) * 100,
-        0
-    )
-    
-    # ===== 7. IDENTIFICAR ALERTAS CRÍTICAS =====
-    municipios_criticos = municipios_completo[municipios_completo['porcentaje_ocupacion'] >= 90]
-    
-    prestadores_criticos = prestadores_detallado[prestadores_detallado['porcentaje_ocupacion'] >= 90]
-    
-    sedes_criticas = sedes_detallado[sedes_detallado['porcentaje_ocupacion'] >= 90].sort_values('porcentaje_ocupacion', ascending=False)
-    
-    tipos_criticos = capacidad_con_tipo[capacidad_con_tipo['porcentaje_ocupacion'] >= 90]
-    
-    municipio_tipo_critico = matriz_municipio_tipo[matriz_municipio_tipo['porcentaje_ocupacion'] >= 90]
-    
-    # ===== 8. IBAGUÉ DETALLADO =====
-    ibague_general = municipios_completo[municipios_completo['municipio_sede_prestador'] == 'IBAGUÉ'].iloc[0].to_dict() if len(municipios_completo[municipios_completo['municipio_sede_prestador'] == 'IBAGUÉ']) > 0 else {}
-    
-    ibague_por_tipo = matriz_municipio_tipo[
-        matriz_municipio_tipo['municipio_sede_prestador'] == 'IBAGUÉ'
-    ].sort_values('cantidad_ci_TOTAL_REPS', ascending=False)
-    
-    # ===== 9. ANÁLISIS INSTITUCIONAL =====
-    instituciones_resumen = df.groupby('tipo_institucion').agg({
-        'cantidad_ci_TOTAL_REPS': 'sum',
-        'ocupacion_total': 'sum',
-        'cantidad_ci_disponibles': 'sum',
-        'municipio_sede_prestador': 'nunique',
-        'nombre_prestador': 'nunique'
-    }).reset_index()
-    
-    instituciones_resumen['porcentaje_ocupacion'] = np.where(
-        instituciones_resumen['cantidad_ci_TOTAL_REPS'] > 0,
-        (instituciones_resumen['ocupacion_total'] / instituciones_resumen['cantidad_ci_TOTAL_REPS']) * 100,
-        0
-    )
-    
-    print("✅ Estadísticas optimizadas calculadas")
-    
-    return {
-        'fecha': fecha,
-        
-        # RESUMEN GENERAL
-        'tolima_general': tolima_general,
-        'resumen_camas_camillas': resumen_camas_camillas,
-        
-        # TERRITORIAL COMPLETO
-        'municipios_completo': municipios_completo,
-        'prestadores_detallado': prestadores_detallado,  # NUEVO: Detalle por prestador
-        'municipios_criticos': municipios_criticos,
-        'ibague_general': ibague_general,
-        
-        # ANÁLISIS POR TIPO CON CAMAS/CAMILLAS
-        'capacidad_con_tipo': capacidad_con_tipo,  # MEJORADO: Con distinción CAMAS/CAMILLAS
-        'tipos_criticos': tipos_criticos,
-        
-        # MATRICES CRUZADAS
-        'matriz_municipio_tipo': matriz_municipio_tipo,
-        'ibague_por_tipo': ibague_por_tipo,
-        
-        # SEDES Y ALERTAS
-        'sedes_detallado': sedes_detallado,
-        'sedes_criticas': sedes_criticas,
-        'prestadores_criticos': prestadores_criticos,  # NUEVO
-        'municipio_tipo_critico': municipio_tipo_critico,
-        
-        # ANÁLISIS INSTITUCIONAL
-        'instituciones_resumen': instituciones_resumen,
-        
-        # DATOS RAW
-        'df': df
-    }
-
-def crear_graficos_optimizados_verticales(stats):
-    """Crea gráficos optimizados con mayor altura vertical"""
-    print("📊 Creando gráficos optimizados con mayor altura...")
-    
-    plt.style.use('default')
-    plt.rcParams['font.size'] = 12  # Aumentar fuente
-    
-    # ===== GRÁFICO 1: CAMAS vs CAMILLAS (MÁS ALTO) =====
-    fig1, (ax1, ax2) = plt.subplots(2, 1, figsize=(16, 12))  # Vertical más alto
-    
-    camas_camillas = stats['resumen_camas_camillas']
-    
-    # Capacidad total CAMAS vs CAMILLAS
-    bars1 = ax1.bar(camas_camillas['tipo_general'], camas_camillas['cantidad_ci_TOTAL_REPS'],
-                    color=[COLORS['primary'], COLORS['secondary']], alpha=0.8, edgecolor='black', width=0.6)
-    ax1.set_ylabel('Capacidad Total', fontsize=16)
-    ax1.set_title('CAPACIDAD TOTAL: CAMAS vs CAMILLAS', fontweight='bold', fontsize=18)
-    ax1.grid(True, alpha=0.3)
-    
-    for bar, valor in zip(bars1, camas_camillas['cantidad_ci_TOTAL_REPS']):
-        ax1.text(bar.get_x() + bar.get_width()/2., bar.get_height() + max(camas_camillas['cantidad_ci_TOTAL_REPS']) * 0.02,
-                f'{int(valor):,}', ha='center', va='bottom', fontweight='bold', fontsize=16)
-    
-    # Ocupación CAMAS vs CAMILLAS
-    bars2 = ax2.bar(camas_camillas['tipo_general'], camas_camillas['porcentaje_ocupacion'],
-                    color=[COLORS['accent'], COLORS['warning']], alpha=0.8, edgecolor='black', width=0.6)
-    ax2.set_ylabel('Porcentaje de Ocupación (%)', fontsize=16)
-    ax2.set_title('OCUPACIÓN: CAMAS vs CAMILLAS', fontweight='bold', fontsize=18)
-    ax2.set_ylim(0, 100)
-    ax2.axhline(y=90, color='red', linestyle='--', alpha=0.7, label='Crítico (90%)', linewidth=3)
-    ax2.grid(True, alpha=0.3)
-    
-    for bar, valor in zip(bars2, camas_camillas['porcentaje_ocupacion']):
-        ax2.text(bar.get_x() + bar.get_width()/2., bar.get_height() + 3,
-                f'{valor:.1f}%', ha='center', va='bottom', fontweight='bold', fontsize=16)
-    
-    ax2.legend(fontsize=14)
-    plt.tight_layout()
-    plt.savefig('grafico1_camas_camillas_alto.png', dpi=300, bbox_inches='tight', facecolor='white')
-    plt.close()
-    
-    # ===== GRÁFICO 2: MUNICIPIOS PRINCIPALES (MÁS ALTO) =====
-    fig2, (ax3, ax4) = plt.subplots(2, 1, figsize=(18, 16))  # Más alto y ancho
-    
-    top_municipios = stats['municipios_completo'].head(15)  # Top 15
-    
-    # Capacidad por municipio
-    bars3 = ax3.bar(range(len(top_municipios)), top_municipios['cantidad_ci_TOTAL_REPS'],
-                    color=[COLORS['secondary'] if mun == 'IBAGUÉ' else COLORS['primary'] 
-                          for mun in top_municipios['municipio_sede_prestador']], 
-                    alpha=0.8, edgecolor='black')
-    
-    ax3.set_ylabel('Capacidad Total', fontsize=16)
-    ax3.set_title('CAPACIDAD HOSPITALARIA POR MUNICIPIO (Top 15)', fontweight='bold', fontsize=18)
-    ax3.set_xticks(range(len(top_municipios)))
-    ax3.set_xticklabels(top_municipios['municipio_sede_prestador'], rotation=45, ha='right', fontsize=13)
-    ax3.grid(True, alpha=0.3)
-    
-    for bar, valor in zip(bars3, top_municipios['cantidad_ci_TOTAL_REPS']):
-        ax3.text(bar.get_x() + bar.get_width()/2., bar.get_height() + max(top_municipios['cantidad_ci_TOTAL_REPS']) * 0.01,
-                f'{int(valor):,}', ha='center', va='bottom', fontweight='bold', fontsize=11)
-    
-    # Ocupación por municipio
-    bars4 = ax4.bar(range(len(top_municipios)), top_municipios['porcentaje_ocupacion'],
-                    color=[COLORS['warning'] if x >= 90 else COLORS['success'] if x < 70 else COLORS['primary'] 
-                          for x in top_municipios['porcentaje_ocupacion']], 
-                    alpha=0.8, edgecolor='black')
-    
-    ax4.set_xlabel('Municipios', fontsize=16)
-    ax4.set_ylabel('Porcentaje de Ocupación (%)', fontsize=16)
-    ax4.set_title('OCUPACIÓN POR MUNICIPIO (Top 15)', fontweight='bold', fontsize=18)
-    ax4.set_xticks(range(len(top_municipios)))
-    ax4.set_xticklabels(top_municipios['municipio_sede_prestador'], rotation=45, ha='right', fontsize=13)
-    ax4.set_ylim(0, 100)
-    ax4.axhline(y=90, color='red', linestyle='--', alpha=0.7, label='Crítico (90%)', linewidth=3)
-    ax4.grid(True, alpha=0.3)
-    
-    for bar, valor in zip(bars4, top_municipios['porcentaje_ocupacion']):
-        ax4.text(bar.get_x() + bar.get_width()/2., bar.get_height() + 2,
-                f'{valor:.1f}%', ha='center', va='bottom', fontweight='bold', fontsize=12)
-    
-    ax4.legend(fontsize=14)
-    plt.tight_layout()
-    plt.savefig('grafico2_municipios_alto.png', dpi=300, bbox_inches='tight', facecolor='white')
-    plt.close()
-    
-    # ===== GRÁFICO 3: TIPOS CON CAMAS/CAMILLAS (MÁS ALTO) =====
-    fig3, (ax5, ax6) = plt.subplots(2, 1, figsize=(20, 16))  # Muy alto para todos los tipos
-    
-    cap_data = stats['capacidad_con_tipo'].head(12)  # Top 12
-    colores_cap = [COLORS['primary'], COLORS['secondary'], COLORS['accent'], COLORS['success'], 
-                  COLORS['warning']] * 3
-    
-    # Capacidad total por tipo con CAMAS/CAMILLAS
-    bars5 = ax5.bar(range(len(cap_data)), cap_data['cantidad_ci_TOTAL_REPS'],
-                    color=colores_cap[:len(cap_data)], alpha=0.8, edgecolor='black')
-    ax5.set_ylabel('Capacidad Total', fontsize=16)
-    ax5.set_title('CAPACIDAD POR TIPO (Con distinción CAMAS/CAMILLAS)', fontweight='bold', fontsize=18)
-    ax5.set_xticks(range(len(cap_data)))
-    ax5.set_xticklabels(cap_data['categoria_con_tipo'], rotation=45, ha='right', fontsize=11)
-    ax5.grid(True, alpha=0.3)
-    
-    for bar, valor in zip(bars5, cap_data['cantidad_ci_TOTAL_REPS']):
-        ax5.text(bar.get_x() + bar.get_width()/2., bar.get_height() + max(cap_data['cantidad_ci_TOTAL_REPS']) * 0.01,
-                f'{int(valor):,}', ha='center', va='bottom', fontweight='bold', fontsize=10)
-    
-    # Ocupación por tipo con CAMAS/CAMILLAS
-    bars6 = ax6.bar(range(len(cap_data)), cap_data['porcentaje_ocupacion'],
-                    color=[COLORS['warning'] if x >= 90 else COLORS['success'] if x < 70 else COLORS['primary'] 
-                          for x in cap_data['porcentaje_ocupacion']], 
-                    alpha=0.8, edgecolor='black')
-    ax6.set_xlabel('Tipo de Capacidad (CAMAS/CAMILLAS)', fontsize=16)
-    ax6.set_ylabel('Porcentaje de Ocupación (%)', fontsize=16)
-    ax6.set_title('OCUPACIÓN POR TIPO (Con distinción CAMAS/CAMILLAS)', fontweight='bold', fontsize=18)
-    ax6.set_xticks(range(len(cap_data)))
-    ax6.set_xticklabels(cap_data['categoria_con_tipo'], rotation=45, ha='right', fontsize=11)
-    ax6.set_ylim(0, 100)
-    ax6.axhline(y=90, color='red', linestyle='--', alpha=0.7, label='Crítico (90%)', linewidth=3)
-    ax6.grid(True, alpha=0.3)
-    
-    for bar, valor in zip(bars6, cap_data['porcentaje_ocupacion']):
-        ax6.text(bar.get_x() + bar.get_width()/2., bar.get_height() + 2,
-                f'{valor:.1f}%', ha='center', va='bottom', fontweight='bold', fontsize=10)
-    
-    ax6.legend(fontsize=14)
-    plt.tight_layout()
-    plt.savefig('grafico3_tipos_camas_camillas_alto.png', dpi=300, bbox_inches='tight', facecolor='white')
-    plt.close()
-    
-    # ===== GRÁFICO 4: IBAGUÉ DETALLADO (MÁS ALTO) =====
-    if len(stats['ibague_por_tipo']) > 0:
-        fig4, (ax7, ax8) = plt.subplots(2, 1, figsize=(18, 14))  # Más alto
-        
-        ibague_data = stats['ibague_por_tipo']
-        
-        # Capacidad en Ibagué por tipo
-        bars7 = ax7.bar(range(len(ibague_data)), ibague_data['cantidad_ci_TOTAL_REPS'],
-                        color=COLORS['secondary'], alpha=0.8, edgecolor='black')
-        ax7.set_ylabel('Capacidad Total', fontsize=16)
-        ax7.set_title('CAPACIDAD EN IBAGUÉ POR TIPO (Con CAMAS/CAMILLAS)', fontweight='bold', fontsize=18)
-        ax7.set_xticks(range(len(ibague_data)))
-        ax7.set_xticklabels(ibague_data['categoria_con_tipo'], rotation=45, ha='right', fontsize=12)
-        ax7.grid(True, alpha=0.3)
-        
-        for bar, valor in zip(bars7, ibague_data['cantidad_ci_TOTAL_REPS']):
-            ax7.text(bar.get_x() + bar.get_width()/2., bar.get_height() + max(ibague_data['cantidad_ci_TOTAL_REPS']) * 0.02,
-                    f'{int(valor)}', ha='center', va='bottom', fontweight='bold', fontsize=12)
-        
-        # Ocupación en Ibagué por tipo
-        bars8 = ax8.bar(range(len(ibague_data)), ibague_data['porcentaje_ocupacion'],
-                        color=[COLORS['warning'] if x >= 90 else COLORS['success'] if x < 70 else COLORS['primary'] 
-                              for x in ibague_data['porcentaje_ocupacion']], 
-                        alpha=0.8, edgecolor='black')
-        ax8.set_xlabel('Tipo de Capacidad (CAMAS/CAMILLAS)', fontsize=16)
-        ax8.set_ylabel('Porcentaje de Ocupación (%)', fontsize=16)
-        ax8.set_title('OCUPACIÓN EN IBAGUÉ POR TIPO (Con CAMAS/CAMILLAS)', fontweight='bold', fontsize=18)
-        ax8.set_xticks(range(len(ibague_data)))
-        ax8.set_xticklabels(ibague_data['categoria_con_tipo'], rotation=45, ha='right', fontsize=12)
-        ax8.set_ylim(0, 100)
-        ax8.axhline(y=90, color='red', linestyle='--', alpha=0.7, label='Crítico (90%)', linewidth=3)
-        ax8.grid(True, alpha=0.3)
-        
-        for bar, valor in zip(bars8, ibague_data['porcentaje_ocupacion']):
-            ax8.text(bar.get_x() + bar.get_width()/2., bar.get_height() + 2,
-                    f'{valor:.1f}%', ha='center', va='bottom', fontweight='bold', fontsize=12)
-        
-        ax8.legend(fontsize=14)
-        plt.tight_layout()
-        plt.savefig('grafico4_ibague_alto.png', dpi=300, bbox_inches='tight', facecolor='white')
-        plt.close()
-    
-    print("✅ Gráficos optimizados con mayor altura creados")
-
-def generar_pdf_final_optimizado(stats, archivo_salida):
-    """Genera PDF final optimizado con alertas en tabla y máximo detalle"""
-    print("📄 Generando PDF final optimizado...")
-    
-    doc = SimpleDocTemplate(archivo_salida, pagesize=A4, topMargin=0.4*inch)
-    story = []
-    styles = getSampleStyleSheet()
-    
-    # Estilos personalizados mejorados
-    title_style = ParagraphStyle('CustomTitle', parent=styles['Title'], fontSize=18, alignment=TA_CENTER, spaceAfter=25)
-    heading_style = ParagraphStyle('CustomHeading', parent=styles['Heading2'], fontSize=14, spaceAfter=12, spaceBefore=18)
-    subheading_style = ParagraphStyle('CustomSubHeading', parent=styles['Heading3'], fontSize=11, spaceAfter=10)
-    
-    # ===== ENCABEZADO =====
-    story.append(Paragraph("SECRETARÍA DE SALUD DEL TOLIMA", title_style))
-    story.append(Paragraph("Informe Final Optimizado de Capacidad Hospitalaria", heading_style))
-    story.append(Paragraph("Análisis Exhaustivo: CAMAS/CAMILLAS + Territorial + Prestadores + Sedes", subheading_style))
-    story.append(Paragraph(f"Fecha del Reporte: {stats['fecha']}", styles['Normal']))
-    story.append(Paragraph(f"Generado el: {datetime.now().strftime('%d/%m/%Y a las %H:%M:%S')}", styles['Normal']))
-    story.append(Spacer(1, 20))
-    
-    # ===== 1. RESUMEN EJECUTIVO OPTIMIZADO =====
-    story.append(Paragraph("1. RESUMEN EJECUTIVO GENERAL", heading_style))
-    
-    # Tabla Tolima General mejorada
-    story.append(Paragraph("1.1 Departamento del Tolima - Resumen General", subheading_style))
-    tolima_data = [[
-        'Indicador', 'Valor', 'Observaciones'
-    ], [
-        'Capacidad Total',
-        f"{stats['tolima_general']['capacidad']:,}",
-        f"Camas + Camillas disponibles"
-    ], [
-        'Ocupación Actual',
-        f"{stats['tolima_general']['ocupada']:,}",
-        f"{stats['tolima_general']['porcentaje']:.1f}% del total"
-    ], [
-        'Disponibles',
-        f"{stats['tolima_general']['disponible']:,}",
-        f"{100 - stats['tolima_general']['porcentaje']:.1f}% disponible"
-    ]]
-    
-    tabla_tolima = Table(tolima_data)
-    tabla_tolima.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), 'lightgrey'),
-        ('TEXTCOLOR', (0, 0), (-1, 0), 'black'),
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, -1), 10),
-        ('GRID', (0, 0), (-1, -1), 1, 'black'),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-    ]))
-    
-    story.append(tabla_tolima)
-    story.append(Spacer(1, 15))
-    
-    # Tabla CAMAS vs CAMILLAS mejorada
-    story.append(Paragraph("1.2 Análisis CAMAS vs CAMILLAS", subheading_style))
-    camas_camillas_data = [['Tipo', 'Capacidad Total', 'Ocupada', 'Disponible', '% Ocupación', 'Municipios', 'Prestadores', 'Sedes']]
-    
-    for _, row in stats['resumen_camas_camillas'].iterrows():
-        estado = "🔴" if row['porcentaje_ocupacion'] >= 90 else "🟡" if row['porcentaje_ocupacion'] >= 80 else "🟢"
-        camas_camillas_data.append([
-            f"{estado} {row['tipo_general']}",
-            f"{int(row['cantidad_ci_TOTAL_REPS']):,}",
-            f"{int(row['ocupacion_total']):,}",
-            f"{int(row['cantidad_ci_disponibles']):,}",
-            f"{row['porcentaje_ocupacion']:.1f}%",
-            f"{int(row['municipio_sede_prestador'])}",
-            f"{int(row['nombre_prestador'])}",
-            f"{int(row['sede_id'])}"
-        ])
-    
-    tabla_camas_camillas = Table(camas_camillas_data)
-    tabla_camas_camillas.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), 'lightblue'),
-        ('TEXTCOLOR', (0, 0), (-1, 0), 'black'),
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, -1), 8),
-        ('GRID', (0, 0), (-1, -1), 1, 'black'),
-    ]))
-    
-    story.append(tabla_camas_camillas)
-    story.append(Spacer(1, 20))
-    
-    # ===== 2. GRÁFICOS OPTIMIZADOS (MÁS GRANDES) =====
-    story.append(Paragraph("2. ANÁLISIS GRÁFICO OPTIMIZADO", heading_style))
-    
-    story.append(Paragraph("2.1 Capacidad y Ocupación: CAMAS vs CAMILLAS", subheading_style))
-    story.append(Image('grafico1_camas_camillas_alto.png', width=8*inch, height=6*inch))  # Más alto
-    story.append(Spacer(1, 15))
-    
-    story.append(Paragraph("2.2 Análisis Municipal Detallado", subheading_style))
-    story.append(Image('grafico2_municipios_alto.png', width=8.5*inch, height=7*inch))  # Más alto
-    story.append(Spacer(1, 15))
-    
-    story.append(PageBreak())
-    
-    # ===== 3. ALERTAS CRÍTICAS EN FORMATO TABLA (MEJORADO) =====
-    story.append(Paragraph("3. ALERTAS CRÍTICAS DETALLADAS", heading_style))
-    
-    alertas_encontradas = False
-    
-    # 3.1 MUNICIPIOS CRÍTICOS (TABLA)
-    if len(stats['municipios_criticos']) > 0:
-        story.append(Paragraph("3.1 🚨 MUNICIPIOS CON OCUPACIÓN CRÍTICA (≥90%)", subheading_style))
-        
-        municipios_criticos_data = [['Municipio', 'Prestadores', 'Sedes', 'Capacidad', 'Ocupada', '% Ocupación', 'Estado']]
-        
-        for _, mun in stats['municipios_criticos'].iterrows():
-            municipios_criticos_data.append([
-                mun['municipio_sede_prestador'],
-                f"{int(mun['num_prestadores'])}",
-                f"{int(mun['num_sedes'])}",
-                f"{int(mun['cantidad_ci_TOTAL_REPS']):,}",
-                f"{int(mun['ocupacion_total']):,}",
-                f"{mun['porcentaje_ocupacion']:.1f}%",
-                "🔴 CRÍTICO"
-            ])
-        
-        tabla_municipios_criticos = Table(municipios_criticos_data)
-        tabla_municipios_criticos.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), 'lightcoral'),
-            ('TEXTCOLOR', (0, 0), (-1, 0), 'black'),
-            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, -1), 8),
-            ('GRID', (0, 0), (-1, -1), 1, 'black'),
-        ]))
-        
-        story.append(tabla_municipios_criticos)
-        story.append(Spacer(1, 15))
-        alertas_encontradas = True
-    
-    # 3.2 SEDES ESPECÍFICAS CRÍTICAS (TABLA MEJORADA)
-    if len(stats['sedes_criticas']) > 0:
-        story.append(Paragraph("3.2 🚨 SEDES ESPECÍFICAS CON OCUPACIÓN CRÍTICA (≥90%)", subheading_style))
-        
-        sedes_criticas_data = [['Municipio', 'Prestador', 'Sede', 'Tipo Capacidad', 'Cap.', 'Ocup.', '% Ocup.', 'Tipo Inst.']]
-        
-        for _, sede in stats['sedes_criticas'].head(20).iterrows():  # Top 20 sedes críticas
-            sedes_criticas_data.append([
-                sede['municipio_sede_prestador'],
-                sede['nombre_prestador'][:25] + "..." if len(sede['nombre_prestador']) > 25 else sede['nombre_prestador'],
-                sede['nombre_sede_prestador'][:20] + "..." if len(sede['nombre_sede_prestador']) > 20 else sede['nombre_sede_prestador'],
-                sede['categoria_con_tipo'][:15] + "..." if len(sede['categoria_con_tipo']) > 15 else sede['categoria_con_tipo'],
-                f"{int(sede['cantidad_ci_TOTAL_REPS'])}",
-                f"{int(sede['ocupacion_total'])}",
-                f"{sede['porcentaje_ocupacion']:.1f}%",
-                sede['tipo_institucion']
-            ])
-        
-        tabla_sedes_criticas = Table(sedes_criticas_data)
-        tabla_sedes_criticas.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), 'orange'),
-            ('TEXTCOLOR', (0, 0), (-1, 0), 'black'),
-            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, -1), 7),
-            ('GRID', (0, 0), (-1, -1), 1, 'black'),
-        ]))
-        
-        story.append(tabla_sedes_criticas)
-        story.append(Spacer(1, 15))
-        alertas_encontradas = True
-    
-    # 3.3 TIPOS DE CAPACIDAD CRÍTICOS (TABLA)
-    if len(stats['tipos_criticos']) > 0:
-        story.append(Paragraph("3.3 🚨 TIPOS DE CAPACIDAD CRÍTICOS EN TOLIMA (≥90%)", subheading_style))
-        
-        tipos_criticos_data = [['Tipo de Capacidad', 'Total', 'Ocupada', '% Ocupación', 'Municipios', 'Prestadores', 'Sedes']]
-        
-        for _, tipo in stats['tipos_criticos'].iterrows():
-            tipos_criticos_data.append([
-                tipo['categoria_con_tipo'],
-                f"{int(tipo['cantidad_ci_TOTAL_REPS']):,}",
-                f"{int(tipo['ocupacion_total']):,}",
-                f"{tipo['porcentaje_ocupacion']:.1f}%",
-                f"{int(tipo['municipio_sede_prestador'])}",
-                f"{int(tipo['nombre_prestador'])}",
-                f"{int(tipo['sede_id'])}"
-            ])
-        
-        tabla_tipos_criticos = Table(tipos_criticos_data)
-        tabla_tipos_criticos.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), 'yellow'),
-            ('TEXTCOLOR', (0, 0), (-1, 0), 'black'),
-            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, -1), 8),
-            ('GRID', (0, 0), (-1, -1), 1, 'black'),
-        ]))
-        
-        story.append(tabla_tipos_criticos)
-        story.append(Spacer(1, 15))
-        alertas_encontradas = True
-    
-    if not alertas_encontradas:
-        story.append(Paragraph("✅ No se encontraron alertas críticas en el sistema.", styles['Normal']))
-    
-    story.append(Spacer(1, 20))
-    
-    # ===== 4. ANÁLISIS POR TIPOS CON CAMAS/CAMILLAS =====
-    story.append(Paragraph("4. ANÁLISIS POR TIPOS DE CAPACIDAD (CAMAS/CAMILLAS)", heading_style))
-    
-    story.append(Image('grafico3_tipos_camas_camillas_alto.png', width=8.5*inch, height=7*inch))  # Más alto
-    story.append(Spacer(1, 15))
-    
-    # Tabla detallada de tipos con CAMAS/CAMILLAS
-    story.append(Paragraph("4.1 Detalle por Tipo con Distinción CAMAS/CAMILLAS", subheading_style))
-    tipos_data = [['Tipo de Capacidad', 'Total', 'Ocupada', '% Ocupación', 'Municipios', 'Prestadores', 'Sedes']]
-    
-    for _, row in stats['capacidad_con_tipo'].iterrows():
-        estado = "🔴" if row['porcentaje_ocupacion'] >= 90 else "🟡" if row['porcentaje_ocupacion'] >= 80 else "🟢"
-        tipos_data.append([
-            f"{estado} {row['categoria_con_tipo']}",
-            f"{int(row['cantidad_ci_TOTAL_REPS']):,}",
-            f"{int(row['ocupacion_total']):,}",
-            f"{row['porcentaje_ocupacion']:.1f}%",
-            f"{int(row['municipio_sede_prestador'])}",
-            f"{int(row['nombre_prestador'])}",
-            f"{int(row['sede_id'])}"
-        ])
-    
-    tabla_tipos = Table(tipos_data)
-    tabla_tipos.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), 'lightgreen'),
-        ('TEXTCOLOR', (0, 0), (-1, 0), 'black'),
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, -1), 7),
-        ('GRID', (0, 0), (-1, -1), 1, 'black'),
-    ]))
-    
-    story.append(tabla_tipos)
-    story.append(Spacer(1, 20))
-    
-    story.append(PageBreak())
-    
-    # ===== 5. ANÁLISIS DETALLADO DE IBAGUÉ =====
-    story.append(Paragraph("5. ANÁLISIS DETALLADO DE IBAGUÉ", heading_style))
-    
-    if len(stats['ibague_por_tipo']) > 0:
-        story.append(Image('grafico4_ibague_alto.png', width=8*inch, height=6*inch))  # Más alto
-        story.append(Spacer(1, 15))
-        
-        # Tabla detallada de Ibagué por tipo con CAMAS/CAMILLAS
-        story.append(Paragraph("5.1 Ibagué por Tipo de Capacidad (CAMAS/CAMILLAS)", subheading_style))
-        ibague_data = [['Tipo de Capacidad', 'Prestadores', 'Sedes', 'Capacidad', 'Ocupada', 'Disponible', '% Ocupación']]
-        
-        for _, row in stats['ibague_por_tipo'].iterrows():
-            estado = "🔴" if row['porcentaje_ocupacion'] >= 90 else "🟡" if row['porcentaje_ocupacion'] >= 80 else "🟢"
-            ibague_data.append([
-                f"{estado} {row['categoria_con_tipo']}",
-                f"{int(row['nombre_prestador'])}",
-                f"{int(row['sede_id'])}",
-                f"{int(row['cantidad_ci_TOTAL_REPS'])}",
-                f"{int(row['ocupacion_total'])}",
-                f"{int(row['cantidad_ci_disponibles'])}",
-                f"{row['porcentaje_ocupacion']:.1f}%"
-            ])
-        
-        tabla_ibague = Table(ibague_data)
-        tabla_ibague.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), 'lightyellow'),
-            ('TEXTCOLOR', (0, 0), (-1, 0), 'black'),
-            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, -1), 7),
-            ('GRID', (0, 0), (-1, -1), 1, 'black'),
-        ]))
-        
-        story.append(tabla_ibague)
-    
-    story.append(Spacer(1, 20))
-    
-    # ===== 6. ANÁLISIS DETALLADO POR MUNICIPIO Y PRESTADOR =====
-    story.append(Paragraph("6. ANÁLISIS DETALLADO: MUNICIPIOS + PRESTADORES", heading_style))
-    
-    # 6.1 Todos los municipios
-    story.append(Paragraph("6.1 Todos los Municipios del Tolima", subheading_style))
-    municipios_data = [['Municipio', 'Prestadores', 'Sedes', 'Tipos Cap.', 'Capacidad', 'Ocupada', 'Disponible', '% Ocupación']]
-    
-    for _, mun in stats['municipios_completo'].iterrows():
-        estado = "🔴" if mun['porcentaje_ocupacion'] >= 90 else "🟡" if mun['porcentaje_ocupacion'] >= 80 else "🟢"
-        municipios_data.append([
-            f"{estado} {mun['municipio_sede_prestador']}",
-            f"{int(mun['num_prestadores'])}",
-            f"{int(mun['num_sedes'])}",
-            f"{int(mun['tipos_capacidad'])}",
-            f"{int(mun['cantidad_ci_TOTAL_REPS']):,}",
-            f"{int(mun['ocupacion_total']):,}",
-            f"{int(mun['cantidad_ci_disponibles']):,}",
-            f"{mun['porcentaje_ocupacion']:.1f}%"
-        ])
-    
-    tabla_municipios_completa = Table(municipios_data)
-    tabla_municipios_completa.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), 'lightcoral'),
-        ('TEXTCOLOR', (0, 0), (-1, 0), 'black'),
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, -1), 6),
-        ('GRID', (0, 0), (-1, -1), 1, 'black'),
-    ]))
-    
-    story.append(tabla_municipios_completa)
-    story.append(Spacer(1, 20))
-    
-    # 6.2 Prestadores principales por municipio
-    story.append(Paragraph("6.2 Prestadores Principales por Municipio (Top 30)", subheading_style))
-    prestadores_data = [['Municipio', 'Prestador', 'Tipo Inst.', 'Sedes', 'Tipos Cap.', 'Capacidad', 'Ocupada', '% Ocupación']]
-    
-    prestadores_top = stats['prestadores_detallado'].nlargest(30, 'cantidad_ci_TOTAL_REPS')
-    
-    for _, prest in prestadores_top.iterrows():
-        estado = "🔴" if prest['porcentaje_ocupacion'] >= 90 else "🟡" if prest['porcentaje_ocupacion'] >= 80 else "🟢"
-        prestadores_data.append([
-            prest['municipio_sede_prestador'],
-            prest['nombre_prestador'][:30] + "..." if len(prest['nombre_prestador']) > 30 else prest['nombre_prestador'],
-            prest['tipo_institucion'],
-            f"{int(prest['num_sedes'])}",
-            f"{int(prest['tipos_capacidad'])}",
-            f"{int(prest['cantidad_ci_TOTAL_REPS']):,}",
-            f"{int(prest['ocupacion_total']):,}",
-            f"{estado} {prest['porcentaje_ocupacion']:.1f}%"
-        ])
-    
-    tabla_prestadores = Table(prestadores_data)
-    tabla_prestadores.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), 'lightsteelblue'),
-        ('TEXTCOLOR', (0, 0), (-1, 0), 'black'),
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, -1), 6),
-        ('GRID', (0, 0), (-1, -1), 1, 'black'),
-    ]))
-    
-    story.append(tabla_prestadores)
-    story.append(Spacer(1, 30))
-    
-    # ===== PIE DE PÁGINA =====
-    story.append(Paragraph("_" * 80, styles['Normal']))
-    story.append(Spacer(1, 10))
-    story.append(Paragraph("INFORMACIÓN TÉCNICA", subheading_style))
-    story.append(Paragraph(f"Desarrollado por: Ing. José Miguel Santos", styles['Normal']))
-    story.append(Paragraph(f"Para: Secretaría de Salud del Tolima", styles['Normal']))
-    story.append(Paragraph(f"© 2025 - Sistema Final Optimizado de Monitoreo Hospitalario", styles['Normal']))
-    story.append(Paragraph(f"Características: CAMAS/CAMILLAS + Alertas en Tabla + Municipios + Prestadores + Gráficos Altos", styles['Normal']))
-    story.append(Paragraph(f"Generado: {datetime.now().strftime('%d/%m/%Y a las %H:%M:%S')}", styles['Normal']))
-    
-    # Generar PDF
-    doc.build(story)
-    
-    # Limpiar archivos temporales
-    import os
-    archivos_temp = [
-        'grafico1_camas_camillas_alto.png', 
-        'grafico2_municipios_alto.png',
-        'grafico3_tipos_camas_camillas_alto.png', 
-        'grafico4_ibague_alto.png'
-    ]
-    for archivo in archivos_temp:
-        if os.path.exists(archivo):
-            os.remove(archivo)
-    
-    print(f"✅ PDF final optimizado generado: {archivo_salida}")
 
 def main():
-    """Función principal"""
-    import sys
+    """Función principal del programa."""
+    print("🏥" + "="*70)
+    print("   GENERADOR DE INFORMES DE CAPACIDAD HOSPITALARIA")
+    print("           DEPARTAMENTO DEL TOLIMA - POR SERVICIOS")
+    print("="*72)
+    print("   Desarrollado por: Ing. José Miguel Santos")
+    print("   Para: Secretaría de Salud del Tolima")
+    print("="*72)
     
+    # Verificar argumentos
     if len(sys.argv) < 2:
-        print("\n🏥 GENERADOR DE INFORMES FINAL OPTIMIZADO")
-        print("=" * 85)
-        print("Desarrollado por: Ing. José Miguel Santos")
-        print("Para: Secretaría de Salud del Tolima")
-        print("=" * 85)
-        print("\nMEJORAS FINALES IMPLEMENTADAS:")
-        print("📊 GRÁFICOS MÁS ALTOS: Mayor altura vertical para mejor visualización")
-        print("📋 ALERTAS EN TABLA: Formato tabla para mejor estructura visual")
-        print("🛏️  CAMAS/CAMILLAS: Distinción en TODOS los análisis (no solo resumen)")
-        print("🏥 MUNICIPIOS + PRESTADORES: Análisis detallado por prestador específico")
-        print("🎯 TABLAS OPTIMIZADAS: Mejor organización y códigos de color")
-        print("📈 MAYOR DETALLE: Sedes específicas con nombres completos")
-        print("\nSECCIONES OPTIMIZADAS:")
-        print("✅ Resumen ejecutivo con CAMAS/CAMILLAS detallado")
-        print("✅ Gráficos de gran altura para mejor visualización")
-        print("✅ Alertas críticas en formato TABLA (municipios, sedes, tipos)")
-        print("✅ Análisis por tipos con distinción CAMAS/CAMILLAS")
-        print("✅ Ibagué detallado con CAMAS/CAMILLAS")
-        print("✅ TODOS los municipios + prestadores específicos")
-        print("\nUSO:")
-        print("  python hospital_report_FINAL_OPTIMIZADO.py archivo.xlsx [salida.pdf]")
+        print("📋 USO DEL PROGRAMA:")
+        print("   python hospital_report.py <archivo_excel> [archivo_salida.pdf]")
+        print("")
+        print("📊 EJEMPLOS:")
+        print("   python hospital_report.py datos_hospitalarios.xlsx")
+        print("   python hospital_report.py datos_hospitalarios.xlsx informe_tolima.pdf")
+        print("")
+        print("🔧 CARACTERÍSTICAS:")
+        print("   ✅ Análisis por tipos de servicio (Observación, Crítico, Hospitalización)")
+        print("   ✅ Estructura: Tolima → Ibagué → Otros Municipios")
+        print("   ✅ Gráficos optimizados y proporcionales")
+        print("   ✅ Tablas detalladas por prestador y sede")
+        print("   ✅ Alertas automáticas por umbrales de ocupación")
+        print("   ✅ Análisis COVID-19 vs No COVID-19")
         return
     
     archivo_excel = sys.argv[1]
-    archivo_salida = sys.argv[2] if len(sys.argv) > 2 else f"informe_final_optimizado_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+    archivo_salida = sys.argv[2] if len(sys.argv) > 2 else None
+    
+    # Verificar que el archivo existe
+    if not os.path.exists(archivo_excel):
+        print(f"❌ Error: El archivo '{archivo_excel}' no existe.")
+        return
+    
+    # Crear generador de informes
+    generador = HospitalReportGenerator()
     
     try:
-        print(f"\n🏥 GENERANDO INFORME FINAL OPTIMIZADO")
-        print("=" * 85)
-        print(f"👨‍💻 Desarrollado por: Ing. José Miguel Santos")
-        print(f"🏛️  Para: Secretaría de Salud del Tolima")
-        print("=" * 85)
-        print(f"📂 Archivo origen: {archivo_excel}")
-        print(f"📄 Archivo destino: {archivo_salida}")
-        print("-" * 85)
+        # Cargar datos
+        if not generador.cargar_datos(archivo_excel):
+            print("❌ Error al cargar los datos. Verifique el formato del archivo.")
+            return
         
-        # Procesar datos con optimización final
-        df = procesar_datos_final_optimizado(archivo_excel)
+        # Generar informe
+        archivo_generado = generador.generar_informe_pdf(archivo_salida)
         
-        # Calcular estadísticas optimizadas
-        stats = calcular_estadisticas_optimizadas(df)
-        
-        # Mostrar resumen en consola
-        print(f"\n📊 RESUMEN CAMAS vs CAMILLAS:")
-        for _, row in stats['resumen_camas_camillas'].iterrows():
-            estado = "🔴" if row['porcentaje_ocupacion'] >= 90 else "🟡" if row['porcentaje_ocupacion'] >= 80 else "🟢"
-            print(f"   {estado} {row['tipo_general']}: {row['porcentaje_ocupacion']:.1f}% ocupación ({int(row['cantidad_ci_TOTAL_REPS']):,} total)")
-        
-        print(f"\n🗺️  RESUMEN TERRITORIAL:")
-        print(f"   🌍 Tolima: {stats['tolima_general']['porcentaje']:.1f}% ocupación")
-        if stats['ibague_general']:
-            print(f"   🏛️  Ibagué: {stats['ibague_general']['porcentaje_ocupacion']:.1f}% ocupación")
-        print(f"   📍 {len(stats['municipios_completo'])} municipios analizados")
-        print(f"   🏥 {len(stats['prestadores_detallado'])} prestadores detallados")
-        
-        print(f"\n🚨 ALERTAS CRÍTICAS:")
-        total_alertas = (len(stats['municipios_criticos']) + 
-                        len(stats['tipos_criticos']) + 
-                        len(stats['sedes_criticas']) +
-                        len(stats['prestadores_criticos']))
-        if total_alertas > 0:
-            print(f"   ⚠️  {total_alertas} alertas críticas identificadas")
-            if len(stats['sedes_criticas']) > 0:
-                print(f"       • {len(stats['sedes_criticas'])} sedes específicas críticas")
-            if len(stats['prestadores_criticos']) > 0:
-                print(f"       • {len(stats['prestadores_criticos'])} prestadores críticos")
+        if archivo_generado:
+            print("🎉" + "="*70)
+            print("✅ INFORME GENERADO EXITOSAMENTE")
+            print(f"📄 Archivo: {archivo_generado}")
+            print(f"📊 Datos procesados: {len(generador.df)} registros")
+            print(f"🏥 Municipios: {generador.df['municipio_sede_prestador'].nunique()}")
+            print(f"🏛️ Prestadores: {generador.df['nombre_prestador'].nunique()}")
+            print(f"📍 Sedes: {generador.df['nombre_sede_prestador'].nunique()}")
+            print("="*72)
+            print("🔍 ESTRUCTURA DEL INFORME:")
+            print("   1. Resumen Ejecutivo del Tolima")
+            print("   2. Análisis Detallado de Ibagué")
+            print("   3. Análisis de Otros Municipios")
+            print("   4. Conclusiones y Recomendaciones")
+            print("="*72)
         else:
-            print(f"   ✅ No hay alertas críticas")
-        print()
-        
-        # Crear gráficos optimizados con mayor altura
-        crear_graficos_optimizados_verticales(stats)
-        
-        # Generar PDF final optimizado
-        generar_pdf_final_optimizado(stats, archivo_salida)
-        
-        print("=" * 85)
-        print(f"🎉 ¡INFORME FINAL OPTIMIZADO GENERADO EXITOSAMENTE!")
-        print(f"📄 Archivo: {archivo_salida}")
-        print(f"📊 {stats['tolima_general']['capacidad']:,} camas/camillas analizadas")
-        print(f"🗺️  {len(stats['municipios_completo'])} municipios completos")
-        print(f"🏥 {len(stats['prestadores_detallado'])} prestadores detallados")
-        print(f"🛏️  {len(stats['capacidad_con_tipo'])} tipos específicos (CAMAS/CAMILLAS)")
-        print(f"📊 Gráficos optimizados con mayor altura vertical")
-        print(f"📋 Alertas críticas en formato tabla mejorado")
-        print("=" * 85)
-        
-    except FileNotFoundError:
-        print(f"❌ Error: No se encontró el archivo '{archivo_excel}'")
-        print("   Verifica que el archivo esté en la carpeta correcta")
+            print("❌ Error al generar el informe PDF.")
+            
     except Exception as e:
-        print(f"❌ Error: {e}")
-        print("   Revisa que el archivo Excel tenga el formato correcto")
+        print(f"❌ Error inesperado: {str(e)}")
         import traceback
         traceback.print_exc()
+    
+    finally:
+        # Limpiar archivos temporales de gráficos
+        archivos_temp = [
+            'grafico_tolima_servicios.png',
+            'grafico_ibague_detallado.png', 
+            'grafico_otros_municipios.png'
+        ]
+        
+        for archivo in archivos_temp:
+            if os.path.exists(archivo):
+                try:
+                    os.remove(archivo)
+                except:
+                    pass
+
 
 if __name__ == "__main__":
     main()
