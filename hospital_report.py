@@ -1,18 +1,12 @@
 #!/usr/bin/env python3
 """
-Generador de Informes de Capacidad Hospitalaria - Departamento del Tolima
-Estructura por Servicios y Niveles de Atención
+Sistema Capacidad Hospitalaria del Tolima
+Discriminado por IPS y Municipio
 
-COLUMNAS PRINCIPALES:
-- municipio_sede_prestador: Municipio del departamento
-- nombre_prestador: Prestador de salud (puede tener varias sedes)
-- nivel_de_atencion_prestador: Nivel de complejidad (I, II, III, IV)
-- nombre_sede_prestador: Nombre de la sede específica
-- nombre_capacidad_instalada: Tipo de cama/camilla y sección
-- cantidad_ci_TOTAL_REPS: Capacidad total
-- total_ingresos_paciente_servicio: Pacientes ingresados (ocupación)
-
-Estructura: Tolima → Ibagué → Federico Lleras → Otros Municipios
+VERSIÓN OPTIMIZADA:
+- ✅ Aprovechamiento inteligente de espacios
+- ✅ Saltos de página dinámicos
+- ✅ Mejor distribución del contenido
 
 Desarrollado por: Ing. José Miguel Santos
 Para: Secretaría de Salud del Tolima
@@ -20,1178 +14,1105 @@ Para: Secretaría de Salud del Tolima
 
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
 from datetime import datetime
 import sys
 import os
-from pathlib import Path
 import warnings
-from reportlab.lib.pagesizes import letter, A4
+from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, PageBreak, Table, TableStyle
+from reportlab.platypus import (
+    SimpleDocTemplate,
+    Paragraph,
+    Spacer,
+    PageBreak,
+    Table,
+    TableStyle,
+    KeepTogether,
+)
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT, TA_JUSTIFY
 from reportlab.pdfgen import canvas
-import matplotlib.patches as mpatches
+from reportlab.platypus.doctemplate import PageTemplate, BaseDocTemplate
+from reportlab.platypus.frames import Frame
 
-# Configurar warnings
-warnings.filterwarnings('ignore')
+# Para manejo de fechas del Excel
+try:
+    from dateutil import parser
+except ImportError:
+    print("⚠️ dateutil no disponible, usando datetime básico")
 
-# Configuración de matplotlib
-plt.style.use('default')
-sns.set_palette("husl")
+warnings.filterwarnings("ignore")
 
 # Configuración global
 COLORS = {
-    "primary": "#7D0F2B",     # Rojo institucional Tolima
-    "secondary": "#F2A900",    # Amarillo dorado
-    "accent": "#5A4214",       # Marrón
-    "success": "#509E2F",      # Verde
-    "warning": "#F7941D",      # Naranja
-    "danger": "#D32F2F",       # Rojo peligro
-    "white": "#FFFFFF",        # Blanco
-    "light_gray": "#F5F5F5",   # Gris claro
-    "dark_gray": "#424242",    # Gris oscuro
+    "primary": "#722F37",  # Vinotinto tenue para Tolima
+    "secondary": "#D4AF37",  # Dorado
+    "success": "#4CAF50",  # Verde para NORMAL
+    "warning": "#FF9800",  # Naranja para ADVERTENCIA
+    "danger": "#DC143C",  # Rojo para CRÍTICO
+    "white": "#FFFFFF",  # Blanco
+    "light_gray": "#F5F5F5",  # Gris claro
+    "header_bg": "#8B4B5C",  # Vinotinto más claro para fondo encabezado
 }
 
-# Umbrales de ocupación
+# Umbrales de ocupación (manteniendo los cambios del usuario)
 UMBRALES = {
-    "critico": 90,      # ≥90% crítico
+    "critico": 90,  # ≥90% crítico
     "advertencia": 70,  # 70-89% advertencia
-    "normal": 0         # <70% normal
+    "normal": 0,  # <70% normal
 }
 
-class HospitalReportGenerator:
-    """Generador de informes de capacidad hospitalaria optimizado por servicios y niveles."""
-    
+
+class HospitalDocTemplate(BaseDocTemplate):
+    """Template con encabezado institucional usando fecha de registro del Excel."""
+
+    def __init__(self, filename, fecha_registro=None, **kwargs):
+        self.allowSplitting = 1
+        BaseDocTemplate.__init__(self, filename, **kwargs)
+
+        # Fecha del registro (desde Excel) o actual como fallback
+        self.fecha_registro = fecha_registro or datetime.now()
+
+        # Header height definido como constante de clase
+        self.header_height = 95  # Aumentado para evitar superposición (puntos)
+        self.header_height_inches = self.header_height / 72.0  # Conversión a inches
+
+        # Frame con márgenes consistentes
+        frame = Frame(
+            0.4 * inch,  # Left margin
+            0.4 * inch,  # Bottom margin
+            self.pagesize[0] - 0.8 * inch,  # Width (page width - left - right margins)
+            self.pagesize[1]
+            - (self.header_height_inches + 0.2) * inch
+            - 0.4 * inch,  # Height ajustada
+            id="normal",
+            leftPadding=6,
+            bottomPadding=6,
+            rightPadding=6,
+            topPadding=6,
+        )
+
+        template = PageTemplate(id="test", frames=frame, onPage=self.add_page_header)
+        self.addPageTemplates([template])
+
+    def add_page_header(self, canvas, doc):
+        """Agregar encabezado institucional con fecha de registro del Excel."""
+        canvas.saveState()
+
+        page_width = doc.pagesize[0]
+        page_height = doc.pagesize[1]
+
+        # Usar height definido en __init__
+        header_height = self.header_height
+
+        # Fondo del encabezado con posición fija
+        canvas.setFillColor(colors.HexColor(COLORS["header_bg"]))
+        canvas.rect(0, page_height - header_height, page_width, header_height, fill=1)
+
+        # Logo fijo - Gobernacion.png
+        logo_path = "Gobernacion.png"
+        if os.path.exists(logo_path):
+            try:
+                logo_x = 15
+                logo_y = page_height - header_height + 15
+                logo_size = 65
+
+                canvas.drawImage(
+                    logo_path,
+                    logo_x,
+                    logo_y,
+                    width=logo_size,
+                    height=logo_size,
+                    mask="auto",
+                )
+            except Exception as e:
+                print(f"⚠️ Error cargando logo Gobernacion.png: {e}")
+        else:
+            print(f"⚠️ Logo no encontrado: {logo_path}")
+
+        # Posiciones Y fijas calculadas desde la parte superior
+        canvas.setFillColor(colors.whitesmoke)
+
+        # Texto principal - GOBERNACIÓN DEL TOLIMA
+        y_titulo = page_height - 25
+        canvas.setFont("Helvetica-Bold", 16)
+        canvas.drawCentredString(page_width / 2, y_titulo, "GOBERNACIÓN DEL TOLIMA")
+
+        # NIT
+        y_nit = page_height - 42
+        canvas.setFont("Helvetica", 10)
+        canvas.drawCentredString(page_width / 2, y_nit, "NIT: 800.113.672-7")
+
+        # SECRETARIA DE SALUD
+        y_secretaria = page_height - 58
+        canvas.setFont("Helvetica-Bold", 12)
+        canvas.drawCentredString(page_width / 2, y_secretaria, "SECRETARIA DE SALUD")
+
+        # DIRECCION DE SEGURIDAD SOCIAL
+        y_direccion = page_height - 75
+        canvas.setFont("Helvetica-Bold", 10)
+        canvas.drawCentredString(
+            page_width / 2, y_direccion, "DIRECCION DE SEGURIDAD SOCIAL"
+        )
+
+        # Información lateral con fecha de registro del Excel
+        canvas.setFont("Helvetica", 8)
+
+        # Fecha del registro (desde Excel)
+        if isinstance(self.fecha_registro, str):
+            fecha_str = self.fecha_registro
+        else:
+            fecha_str = self.fecha_registro.strftime("%d/%m/%Y %H:%M")
+
+        y_fecha = page_height - 30
+        canvas.drawRightString(page_width - 15, y_fecha, f"Fecha registro: {fecha_str}")
+
+        # Número de página
+        y_pagina = page_height - 42
+        canvas.drawRightString(page_width - 15, y_pagina, f"Página {doc.page}")
+
+        # Línea separadora en la parte inferior del encabezado
+        canvas.setStrokeColor(colors.HexColor(COLORS["secondary"]))
+        canvas.setLineWidth(2)
+        canvas.line(
+            0,
+            page_height - header_height,
+            page_width,
+            page_height - header_height,
+        )
+
+        canvas.restoreState()
+
+
+class HospitalCompletoGenerator:
+    """Generador completo con optimización de espacios."""
+
     def __init__(self):
-        """Inicializar el generador de reportes."""
         self.df = None
         self.fecha_procesamiento = datetime.now()
-        self.mapeo_servicios = self._crear_mapeo_servicios()
-        self.mapeo_niveles = self._crear_mapeo_niveles()
-        
-    def _crear_mapeo_servicios(self):
-        """Crear mapeo de capacidades a tipos de servicio."""
-        return {
-            'observacion': {
-                'nombre': 'Observación/Urgencias',
-                'descripcion': 'Servicios de urgencias y observación',
-                'keywords': [
-                    'observacion', 'observación', 'urgencias', 'urgencia', 'emergencia', 'emergencias',
-                    'camilla', 'camillas', 'consulta externa', 'triage', 'clasificacion',
-                    'camilla de observacion', 'camilla observacion', 'emergencia adulto',
-                    'emergencia pediatric', 'consulta', 'procedimientos', 'sala de procedimientos'
-                ],
-                'color': COLORS['warning']
-            },
-            'cuidado_critico': {
-                'nombre': 'Cuidado Crítico',
-                'descripcion': 'UCI y Cuidado Intermedio',
-                'keywords': [
-                    'uci', 'UCI', 'cuidado intensivo', 'cuidado intermedio', 'intensivo', 'intermedio',
-                    'unidad de cuidado intensivo', 'unidad cuidado intermedio', 'cuidados intensivos',
-                    'cuidados intermedios', 'critico', 'crítico', 'coronario', 'reanimacion'
-                ],
-                'color': COLORS['danger']
-            },
-            'hospitalizacion': {
-                'nombre': 'Hospitalización',
-                'descripcion': 'Servicios de hospitalización general',
-                'keywords': [
-                    'adulto', 'adultos', 'pediatric', 'pediátric', 'pediatria', 'gineco', 'ginecologia',
-                    'medicina', 'cirugia', 'cirugía', 'general', 'hospitalizacion', 'hospitalización',
-                    'cama', 'camas', 'internacion', 'internación', 'sala', 'piso', 'habitacion',
-                    'maternidad', 'obstetricia', 'neonatal', 'recien nacido', 'lactantes'
-                ],
-                'color': COLORS['primary']
-            }
-        }
-    
-    def _crear_mapeo_niveles(self):
-        """Crear mapeo de niveles de atención."""
-        return {
-            'I': {'nombre': 'Nivel I', 'descripcion': 'Baja complejidad', 'color': COLORS['success']},
-            'II': {'nombre': 'Nivel II', 'descripcion': 'Mediana complejidad', 'color': COLORS['secondary']},
-            'III': {'nombre': 'Nivel III', 'descripcion': 'Alta complejidad', 'color': COLORS['primary']},
-            'IV': {'nombre': 'Nivel IV', 'descripcion': 'Muy alta complejidad', 'color': COLORS['danger']}
-        }
-    
-    def _clasificar_servicio(self, nombre_capacidad):
-        """Clasificar una capacidad en tipo de servicio."""
-        nombre_lower = str(nombre_capacidad).lower()
-        
-        # Verificar observación/urgencias
-        for keyword in self.mapeo_servicios['observacion']['keywords']:
-            if keyword in nombre_lower:
-                return 'observacion'
-        
-        # Verificar cuidado crítico
-        for keyword in self.mapeo_servicios['cuidado_critico']['keywords']:
-            if keyword in nombre_lower:
-                return 'cuidado_critico'
-        
-        # Por defecto, hospitalización
-        return 'hospitalizacion'
-    
-    def _limpiar_nivel_atencion(self, nivel):
-        """Limpiar y estandarizar el nivel de atención."""
-        if pd.isna(nivel):
-            return 'N/A'
-        
-        nivel_str = str(nivel).strip().upper()
-        
-        # Extraer número romano o arábigo
-        if 'I' in nivel_str and 'V' not in nivel_str:
-            if nivel_str.count('I') == 1:
-                return 'I'
-            elif nivel_str.count('I') == 2:
-                return 'II'
-            elif nivel_str.count('I') == 3:
-                return 'III'
-        elif 'IV' in nivel_str or '4' in nivel_str:
-            return 'IV'
-        elif 'III' in nivel_str or '3' in nivel_str:
-            return 'III'
-        elif 'II' in nivel_str or '2' in nivel_str:
-            return 'II'
-        elif '1' in nivel_str:
-            return 'I'
-        
-        return 'N/A'
-    
+        self.todas_categorias = []
+
     def cargar_datos(self, archivo_excel):
-        """Cargar y procesar datos del archivo Excel."""
+        """Cargar los datos del Excel."""
         try:
-            print(f"📂 Cargando datos desde: {archivo_excel}")
-            
-            # Cargar datos
+            print(f"📂 Cargando los datos hospitalarios: {archivo_excel}")
+
             self.df = pd.read_excel(archivo_excel)
             print(f"📊 Datos cargados: {len(self.df)} registros")
-            
+
             # Verificar columnas esenciales
             columnas_requeridas = [
-                'municipio_sede_prestador',
-                'nombre_prestador', 
-                'nivel_de_atencion_prestador',
-                'nombre_sede_prestador',
-                'nombre_capacidad_instalada',
-                'cantidad_ci_TOTAL_REPS',
-                'total_ingresos_paciente_servicio'
+                "municipio_sede_prestador",
+                "nombre_prestador",
+                "nombre_sede_prestador",
+                "nombre_capacidad_instalada",
+                "cantidad_ci_TOTAL_REPS",
+                "total_ingresos_paciente_servicio",
             ]
-            
-            columnas_faltantes = [col for col in columnas_requeridas if col not in self.df.columns]
+
+            columnas_faltantes = [
+                col for col in columnas_requeridas if col not in self.df.columns
+            ]
             if columnas_faltantes:
                 print(f"❌ Error: Columnas faltantes: {columnas_faltantes}")
-                print(f"📋 Columnas disponibles: {list(self.df.columns)}")
                 return False
-            
-            # Procesar datos
+
             self._procesar_datos()
-            print("✅ Datos procesados exitosamente")
-            
+            print("✅ Datos procesados correctamente")
             return True
-            
+
         except Exception as e:
             print(f"❌ Error al cargar datos: {str(e)}")
             return False
-    
+
     def _procesar_datos(self):
-        """Procesar y limpiar los datos cargados."""
-        print("🔄 Procesando datos...")
-        
+        """Procesar los datos."""
+        print("🔄 Procesando datos hospitalarios...")
+
         # Limpiar nombres de columnas
         self.df.columns = self.df.columns.str.strip()
-        
+
         # Convertir valores numéricos
-        self.df['cantidad_ci_TOTAL_REPS'] = pd.to_numeric(self.df['cantidad_ci_TOTAL_REPS'], errors='coerce').fillna(0)
-        self.df['total_ingresos_paciente_servicio'] = pd.to_numeric(self.df['total_ingresos_paciente_servicio'], errors='coerce').fillna(0)
-        
+        self.df["cantidad_ci_TOTAL_REPS"] = pd.to_numeric(
+            self.df["cantidad_ci_TOTAL_REPS"], errors="coerce"
+        ).fillna(0)
+        self.df["total_ingresos_paciente_servicio"] = pd.to_numeric(
+            self.df["total_ingresos_paciente_servicio"], errors="coerce"
+        ).fillna(0)
+
         # Calcular porcentaje de ocupación
-        self.df['porcentaje_ocupacion'] = np.where(
-            self.df['cantidad_ci_TOTAL_REPS'] > 0,
-            (self.df['total_ingresos_paciente_servicio'] / self.df['cantidad_ci_TOTAL_REPS']) * 100,
-            0
-        )
-        
-        # Calcular disponibilidad
-        self.df['disponible'] = self.df['cantidad_ci_TOTAL_REPS'] - self.df['total_ingresos_paciente_servicio']
-        self.df['disponible'] = self.df['disponible'].clip(lower=0)  # No puede ser negativo
-        
-        # Limpiar y estandarizar nombres
-        self.df['municipio_sede_prestador'] = self.df['municipio_sede_prestador'].str.strip().str.title()
-        self.df['nombre_prestador'] = self.df['nombre_prestador'].str.strip()
-        self.df['nombre_sede_prestador'] = self.df['nombre_sede_prestador'].str.strip()
-        self.df['nombre_capacidad_instalada'] = self.df['nombre_capacidad_instalada'].str.strip()
-        
-        # Limpiar nivel de atención
-        self.df['nivel_atencion_limpio'] = self.df['nivel_de_atencion_prestador'].apply(self._limpiar_nivel_atencion)
-        
-        # Asegurar que Ibagué esté bien escrito
-        self.df['municipio_sede_prestador'] = self.df['municipio_sede_prestador'].replace(
-            ['Ibague', 'IBAGUE', 'ibague'], 'Ibagué'
-        )
-        
-        # DEBUG: Mostrar tipos de capacidad instalada únicos
-        print("🔍 TIPOS DE CAPACIDAD INSTALADA ENCONTRADOS:")
-        tipos_unicos = self.df['nombre_capacidad_instalada'].unique()
-        for i, tipo in enumerate(sorted(tipos_unicos), 1):
-            print(f"   {i:2d}. {tipo}")
-        print()
-        
-        # Clasificar por tipo de servicio
-        self.df['tipo_servicio'] = self.df['nombre_capacidad_instalada'].apply(self._clasificar_servicio)
-        
-        # DEBUG: Mostrar clasificación por servicio
-        print("📊 CLASIFICACIÓN POR TIPO DE SERVICIO:")
-        clasificacion = self.df.groupby('tipo_servicio').agg({
-            'cantidad_ci_TOTAL_REPS': 'sum',
-            'total_ingresos_paciente_servicio': 'sum',
-            'nombre_capacidad_instalada': 'nunique'
-        }).reset_index()
-        
-        for _, row in clasificacion.iterrows():
-            porcentaje = (row['total_ingresos_paciente_servicio'] / row['cantidad_ci_TOTAL_REPS'] * 100) if row['cantidad_ci_TOTAL_REPS'] > 0 else 0
-            print(f"   🔹 {row['tipo_servicio'].upper()}:")
-            print(f"      • Capacidad: {row['cantidad_ci_TOTAL_REPS']:,} unidades")
-            print(f"      • Ocupación: {row['total_ingresos_paciente_servicio']:,} pacientes ({porcentaje:.1f}%)")
-            print(f"      • Tipos diferentes: {row['nombre_capacidad_instalada']}")
-        print()
-        
-        # Crear identificadores únicos
-        self.df['prestador_sede'] = self.df['nombre_prestador'] + " - " + self.df['nombre_sede_prestador']
-        
-        print(f"📊 Procesamiento completado:")
-        print(f"   🏘️  Municipios: {self.df['municipio_sede_prestador'].nunique()}")
-        print(f"   🏥 Prestadores: {self.df['nombre_prestador'].nunique()}")
-        print(f"   🏢 Sedes: {self.df['nombre_sede_prestador'].nunique()}")
-        print(f"   📋 Tipos de capacidad: {self.df['nombre_capacidad_instalada'].nunique()}")
-        print(f"   🎯 Servicios: {self.df['tipo_servicio'].value_counts().to_dict()}")
-        print(f"   🔢 Niveles: {self.df['nivel_atencion_limpio'].value_counts().to_dict()}")
-        print()
-        
-        # Verificar si hay datos para observación/urgencias
-        obs_data = self.df[self.df['tipo_servicio'] == 'observacion']
-        if obs_data.empty:
-            print("⚠️  WARNING: No se encontraron datos para OBSERVACIÓN/URGENCIAS")
-            print("    Verificando keywords utilizadas...")
-            
-            # Mostrar algunos ejemplos que podrían ser observación
-            ejemplos_posibles = []
-            for tipo in tipos_unicos:
-                tipo_lower = tipo.lower()
-                if any(word in tipo_lower for word in ['observ', 'urgenc', 'emergen', 'camilla', 'consult']):
-                    ejemplos_posibles.append(tipo)
-            
-            if ejemplos_posibles:
-                print("    Posibles tipos que deberían ser observación:")
-                for ejemplo in ejemplos_posibles[:5]:
-                    print(f"      • {ejemplo}")
-            print()
-    
-    def _obtener_estadisticas_tolima(self):
-        """Obtener estadísticas generales del departamento del Tolima."""
-        stats = {}
-        
-        # Totales por tipo de servicio
-        for tipo_servicio in self.mapeo_servicios.keys():
-            df_servicio = self.df[self.df['tipo_servicio'] == tipo_servicio]
-            
-            stats[tipo_servicio] = {
-                'capacidad_total': int(df_servicio['cantidad_ci_TOTAL_REPS'].sum()),
-                'ocupacion_total': int(df_servicio['total_ingresos_paciente_servicio'].sum()),
-                'disponible': int(df_servicio['disponible'].sum()),
-                'municipios': df_servicio['municipio_sede_prestador'].nunique(),
-                'prestadores': df_servicio['nombre_prestador'].nunique(),
-                'sedes': df_servicio['nombre_sede_prestador'].nunique()
-            }
-            
-            # Calcular porcentaje
-            if stats[tipo_servicio]['capacidad_total'] > 0:
-                stats[tipo_servicio]['porcentaje_ocupacion'] = round(
-                    (stats[tipo_servicio]['ocupacion_total'] / stats[tipo_servicio]['capacidad_total']) * 100, 1
-                )
-            else:
-                stats[tipo_servicio]['porcentaje_ocupacion'] = 0
-        
-        # Totales por nivel de atención
-        stats['niveles'] = {}
-        for nivel in ['I', 'II', 'III', 'IV', 'N/A']:
-            df_nivel = self.df[self.df['nivel_atencion_limpio'] == nivel]
-            
-            if len(df_nivel) > 0:
-                stats['niveles'][nivel] = {
-                    'capacidad_total': int(df_nivel['cantidad_ci_TOTAL_REPS'].sum()),
-                    'ocupacion_total': int(df_nivel['total_ingresos_paciente_servicio'].sum()),
-                    'disponible': int(df_nivel['disponible'].sum()),
-                    'municipios': df_nivel['municipio_sede_prestador'].nunique(),
-                    'prestadores': df_nivel['nombre_prestador'].nunique()
-                }
-                
-                if stats['niveles'][nivel]['capacidad_total'] > 0:
-                    stats['niveles'][nivel]['porcentaje_ocupacion'] = round(
-                        (stats['niveles'][nivel]['ocupacion_total'] / stats['niveles'][nivel]['capacidad_total']) * 100, 1
-                    )
-                else:
-                    stats['niveles'][nivel]['porcentaje_ocupacion'] = 0
-        
-        # Estadísticas generales
-        stats['general'] = {
-            'total_municipios': self.df['municipio_sede_prestador'].nunique(),
-            'total_prestadores': self.df['nombre_prestador'].nunique(),
-            'total_sedes': self.df['nombre_sede_prestador'].nunique(),
-            'capacidad_total_departamento': int(self.df['cantidad_ci_TOTAL_REPS'].sum()),
-            'ocupacion_total_departamento': int(self.df['total_ingresos_paciente_servicio'].sum()),
-            'disponible_total_departamento': int(self.df['disponible'].sum())
-        }
-        
-        if stats['general']['capacidad_total_departamento'] > 0:
-            stats['general']['porcentaje_ocupacion_departamento'] = round(
-                (stats['general']['ocupacion_total_departamento'] / stats['general']['capacidad_total_departamento']) * 100, 1
+        self.df["porcentaje_ocupacion"] = np.where(
+            self.df["cantidad_ci_TOTAL_REPS"] > 0,
+            (
+                self.df["total_ingresos_paciente_servicio"]
+                / self.df["cantidad_ci_TOTAL_REPS"]
             )
-        else:
-            stats['general']['porcentaje_ocupacion_departamento'] = 0
-        
-        return stats
-    
-    def _obtener_estadisticas_ibague(self):
-        """Obtener estadísticas específicas de Ibagué."""
-        df_ibague = self.df[self.df['municipio_sede_prestador'] == 'Ibagué']
-        
-        if df_ibague.empty:
-            return None
-        
-        stats = {}
-        
-        # Por tipo de servicio
-        for tipo_servicio in self.mapeo_servicios.keys():
-            df_servicio = df_ibague[df_ibague['tipo_servicio'] == tipo_servicio]
-            
-            stats[tipo_servicio] = {
-                'capacidad_total': int(df_servicio['cantidad_ci_TOTAL_REPS'].sum()),
-                'ocupacion_total': int(df_servicio['total_ingresos_paciente_servicio'].sum()),
-                'disponible': int(df_servicio['disponible'].sum()),
-                'prestadores': df_servicio['nombre_prestador'].nunique(),
-                'sedes': df_servicio['nombre_sede_prestador'].nunique()
-            }
-            
-            if stats[tipo_servicio]['capacidad_total'] > 0:
-                stats[tipo_servicio]['porcentaje_ocupacion'] = round(
-                    (stats[tipo_servicio]['ocupacion_total'] / stats[tipo_servicio]['capacidad_total']) * 100, 1
-                )
-            else:
-                stats[tipo_servicio]['porcentaje_ocupacion'] = 0
-        
-        # Por nivel de atención
-        stats['niveles'] = {}
-        for nivel in ['I', 'II', 'III', 'IV', 'N/A']:
-            df_nivel = df_ibague[df_ibague['nivel_atencion_limpio'] == nivel]
-            
-            if len(df_nivel) > 0:
-                stats['niveles'][nivel] = {
-                    'capacidad_total': int(df_nivel['cantidad_ci_TOTAL_REPS'].sum()),
-                    'ocupacion_total': int(df_nivel['total_ingresos_paciente_servicio'].sum()),
-                    'disponible': int(df_nivel['disponible'].sum()),
-                    'prestadores': df_nivel['nombre_prestador'].nunique(),
-                    'sedes': df_nivel['nombre_sede_prestador'].nunique()
-                }
-                
-                if stats['niveles'][nivel]['capacidad_total'] > 0:
-                    stats['niveles'][nivel]['porcentaje_ocupacion'] = round(
-                        (stats['niveles'][nivel]['ocupacion_total'] / stats['niveles'][nivel]['capacidad_total']) * 100, 1
-                    )
+            * 100,
+            0,
+        )
+
+        # Calcular disponible
+        self.df["disponible"] = (
+            self.df["cantidad_ci_TOTAL_REPS"]
+            - self.df["total_ingresos_paciente_servicio"]
+        )
+        self.df["disponible"] = self.df["disponible"].clip(lower=0)
+
+        # Limpiar nombres
+        self.df["municipio_sede_prestador"] = (
+            self.df["municipio_sede_prestador"].str.strip().str.title()
+        )
+        self.df["nombre_prestador"] = self.df["nombre_prestador"].str.strip()
+        self.df["nombre_capacidad_instalada"] = self.df[
+            "nombre_capacidad_instalada"
+        ].str.strip()
+
+        # Obtener TODAS las categorías del Excel
+        self.todas_categorias = sorted(self.df["nombre_capacidad_instalada"].unique())
+
+        print(f"📊 Registros procesados: {len(self.df)}")
+        print(f"🏘️ Municipios: {self.df['municipio_sede_prestador'].nunique()}")
+        print(f"🏥 IPS: {self.df['nombre_prestador'].nunique()}")
+        print(f"📋 Categorías encontradas: {len(self.todas_categorias)}")
+
+        # Mostrar todas las categorías
+        print("📋 CATEGORÍAS DEL EXCEL:")
+        for i, categoria in enumerate(self.todas_categorias, 1):
+            count = len(self.df[self.df["nombre_capacidad_instalada"] == categoria])
+            print(f"   {i:2d}. {categoria} ({count} registros)")
+
+    def _extraer_fecha_registro(self):
+        """Extraer fecha de registro del Excel."""
+        try:
+            if "fecha_registro" in self.df.columns:
+                # Obtener la fecha más reciente (o común) del Excel
+                fechas = self.df["fecha_registro"].dropna()
+                if not fechas.empty:
+                    # Usar la fecha más reciente
+                    fecha_registro = fechas.max()
+
+                    # Convertir a datetime si es string
+                    if isinstance(fecha_registro, str):
+                        try:
+                            from dateutil import parser
+
+                            fecha_registro = parser.parse(fecha_registro)
+                        except:
+                            # Si no se puede parsear, usar fecha actual
+                            print(
+                                "⚠️ No se pudo parsear fecha_registro, usando fecha actual"
+                            )
+                            return datetime.now()
+
+                    print(f"✅ Fecha de registro extraída: {fecha_registro}")
+                    return fecha_registro
                 else:
-                    stats['niveles'][nivel]['porcentaje_ocupacion'] = 0
+                    print("⚠️ Columna fecha_registro vacía, usando fecha actual")
+                    return datetime.now()
+            else:
+                print("⚠️ Columna fecha_registro no encontrada, usando fecha actual")
+                return datetime.now()
+        except Exception as e:
+            print(f"⚠️ Error extrayendo fecha_registro: {e}, usando fecha actual")
+            return datetime.now()
+
+    def _estimar_altura_tabla(self, tabla_data, ancho_columnas=None):
+        """Estimar altura aproximada de una tabla en puntos."""
+        if not tabla_data:
+            return 0
         
-        # Totales de Ibagué
-        stats['total'] = {
-            'capacidad_total': int(df_ibague['cantidad_ci_TOTAL_REPS'].sum()),
-            'ocupacion_total': int(df_ibague['total_ingresos_paciente_servicio'].sum()),
-            'disponible': int(df_ibague['disponible'].sum()),
-            'prestadores': df_ibague['nombre_prestador'].nunique(),
-            'sedes': df_ibague['nombre_sede_prestador'].nunique()
-        }
+        # Altura aproximada por fila (incluyendo padding y borders)
+        altura_fila_header = 25  # Header más alto
+        altura_fila_normal = 15  # Filas normales
         
-        if stats['total']['capacidad_total'] > 0:
-            stats['total']['porcentaje_ocupacion'] = round(
-                (stats['total']['ocupacion_total'] / stats['total']['capacidad_total']) * 100, 1
-            )
-        else:
-            stats['total']['porcentaje_ocupacion'] = 0
+        num_filas = len(tabla_data)
+        altura_estimada = altura_fila_header + (num_filas - 1) * altura_fila_normal
         
-        return stats
-    
-    def _obtener_estadisticas_federico_lleras(self):
-        """Obtener estadísticas específicas del Hospital Federico Lleras Acosta."""
-        # Buscar variaciones del nombre
-        nombres_federico = [
-            'FEDERICO LLERAS ACOSTA', 'Federico Lleras Acosta', 'federico lleras acosta',
-            'HOSPITAL FEDERICO LLERAS', 'Hospital Federico Lleras', 'hospital federico lleras',
-            'FEDERICO LLERAS', 'Federico Lleras', 'federico lleras',
-            'LLERAS ACOSTA', 'Lleras Acosta', 'lleras acosta',
-            'HFL', 'HFLLA'
+        return altura_estimada
+
+    def _crear_seccion_firmas(self):
+        """Crear sección de firmas institucionales."""
+        estilos = getSampleStyleSheet()
+
+        # Estilo para firmas
+        estilo_firma = ParagraphStyle(
+            "EstiloFirma",
+            parent=estilos["Normal"],
+            fontSize=9,
+            spaceAfter=4,
+            spaceBefore=2,
+            alignment=TA_LEFT,
+            fontName="Helvetica",
+        )
+
+        estilo_firma_center = ParagraphStyle(
+            "EstiloFirmaCenter",
+            parent=estilos["Normal"],
+            fontSize=9,
+            spaceAfter=4,
+            spaceBefore=2,
+            alignment=TA_CENTER,
+            fontName="Helvetica",
+        )
+
+        elementos_firmas = []
+
+        # Separador antes de firmas
+        elementos_firmas.append(Spacer(1, 0.4 * inch))
+        elementos_firmas.append(Paragraph("Cordialmente,", estilo_firma))
+        elementos_firmas.append(Spacer(1, 0.3 * inch))
+
+        # Crear tabla de firmas principales (2 columnas)
+        datos_firmas = [
+            [
+                Paragraph(
+                    "<b>DOUGLAS QUINTERO TÉLLEZ</b><br/>Director de Seguridad Social<br/>Secretaria de Salud del Tolima",
+                    estilo_firma_center,
+                ),
+                Paragraph(
+                    "<b>ALISON AMAYA REYES</b><br/>Directora Desarrollo de servicios<br/>Secretaria de Salud del Tolima",
+                    estilo_firma_center,
+                ),
+            ]
         ]
-        
-        df_federico = None
-        nombre_encontrado = None
-        
-        # Buscar el prestador con alguno de estos nombres
-        for nombre in nombres_federico:
-            df_temp = self.df[self.df['nombre_prestador'].str.contains(nombre, case=False, na=False)]
-            if not df_temp.empty:
-                df_federico = df_temp
-                nombre_encontrado = nombre
-                break
-        
-        if df_federico is None or df_federico.empty:
-            return None
-        
-        stats = {'nombre_encontrado': nombre_encontrado}
-        
-        # Por tipo de servicio
-        for tipo_servicio in self.mapeo_servicios.keys():
-            df_servicio = df_federico[df_federico['tipo_servicio'] == tipo_servicio]
-            
-            stats[tipo_servicio] = {
-                'capacidad_total': int(df_servicio['cantidad_ci_TOTAL_REPS'].sum()),
-                'ocupacion_total': int(df_servicio['total_ingresos_paciente_servicio'].sum()),
-                'disponible': int(df_servicio['disponible'].sum()),
-                'sedes': df_servicio['nombre_sede_prestador'].nunique(),
-                'tipos_capacidad': df_servicio['nombre_capacidad_instalada'].nunique()
-            }
-            
-            if stats[tipo_servicio]['capacidad_total'] > 0:
-                stats[tipo_servicio]['porcentaje_ocupacion'] = round(
-                    (stats[tipo_servicio]['ocupacion_total'] / stats[tipo_servicio]['capacidad_total']) * 100, 1
-                )
-            else:
-                stats[tipo_servicio]['porcentaje_ocupacion'] = 0
-        
-        # Por nivel de atención
-        stats['niveles'] = {}
-        for nivel in ['I', 'II', 'III', 'IV', 'N/A']:
-            df_nivel = df_federico[df_federico['nivel_atencion_limpio'] == nivel]
-            
-            if len(df_nivel) > 0:
-                stats['niveles'][nivel] = {
-                    'capacidad_total': int(df_nivel['cantidad_ci_TOTAL_REPS'].sum()),
-                    'ocupacion_total': int(df_nivel['total_ingresos_paciente_servicio'].sum()),
-                    'disponible': int(df_nivel['disponible'].sum()),
-                    'sedes': df_nivel['nombre_sede_prestador'].nunique(),
-                    'tipos_capacidad': df_nivel['nombre_capacidad_instalada'].nunique()
-                }
-                
-                if stats['niveles'][nivel]['capacidad_total'] > 0:
-                    stats['niveles'][nivel]['porcentaje_ocupacion'] = round(
-                        (stats['niveles'][nivel]['ocupacion_total'] / stats['niveles'][nivel]['capacidad_total']) * 100, 1
-                    )
-                else:
-                    stats['niveles'][nivel]['porcentaje_ocupacion'] = 0
-        
-        # Totales del Federico Lleras
-        stats['total'] = {
-            'capacidad_total': int(df_federico['cantidad_ci_TOTAL_REPS'].sum()),
-            'ocupacion_total': int(df_federico['total_ingresos_paciente_servicio'].sum()),
-            'disponible': int(df_federico['disponible'].sum()),
-            'sedes': df_federico['nombre_sede_prestador'].nunique(),
-            'municipios': df_federico['municipio_sede_prestador'].nunique(),
-            'tipos_capacidad': df_federico['nombre_capacidad_instalada'].nunique()
-        }
-        
-        if stats['total']['capacidad_total'] > 0:
-            stats['total']['porcentaje_ocupacion'] = round(
-                (stats['total']['ocupacion_total'] / stats['total']['capacidad_total']) * 100, 1
+
+        tabla_firmas = Table(datos_firmas, colWidths=[3.5 * inch, 3.5 * inch])
+        tabla_firmas.setStyle(
+            TableStyle(
+                [
+                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
+                    ("FONTSIZE", (0, 0), (-1, -1), 9),
+                    ("TOPPADDING", (0, 0), (-1, -1), 20),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                ]
             )
+        )
+
+        elementos_firmas.append(tabla_firmas)
+        elementos_firmas.append(Spacer(1, 0.2 * inch))
+
+        # Información adicional del equipo
+        elementos_firmas.append(
+            Paragraph(
+                "<b>Proyecto:</b> Adriana Cardozo – Luis Alberto Ortiz Contratistas",
+                estilo_firma,
+            )
+        )
+        elementos_firmas.append(
+            Paragraph("<b>Automatización:</b> José Miguel Santos", estilo_firma)
+        )
+        elementos_firmas.append(
+            Paragraph(
+                "<b>Reviso:</b> Aldo Eugenio Beltrán Rivera – Coordinador de Emergencias y Desastres – CRUET",
+                estilo_firma,
+            )
+        )
+
+        return elementos_firmas
+
+    def _determinar_estado(self, porcentaje):
+        """Determinar estado según umbral."""
+        if porcentaje >= UMBRALES["critico"]:
+            return "CRÍTICO"
+        elif porcentaje >= UMBRALES["advertencia"]:
+            return "ADVERTENCIA"
         else:
-            stats['total']['porcentaje_ocupacion'] = 0
-        
-        # Detalles por sede
-        stats['sedes'] = []
-        for sede in df_federico['nombre_sede_prestador'].unique():
-            df_sede = df_federico[df_federico['nombre_sede_prestador'] == sede]
-            
-            sede_stats = {
-                'nombre': sede,
-                'municipio': df_sede['municipio_sede_prestador'].iloc[0] if len(df_sede) > 0 else 'N/A',
-                'nivel': df_sede['nivel_atencion_limpio'].mode().iloc[0] if len(df_sede['nivel_atencion_limpio'].mode()) > 0 else 'N/A',
-                'capacidad_total': int(df_sede['cantidad_ci_TOTAL_REPS'].sum()),
-                'ocupacion_total': int(df_sede['total_ingresos_paciente_servicio'].sum()),
-                'disponible': int(df_sede['disponible'].sum()),
-                'tipos_capacidad': df_sede['nombre_capacidad_instalada'].nunique()
-            }
-            
-            if sede_stats['capacidad_total'] > 0:
-                sede_stats['porcentaje_ocupacion'] = round(
-                    (sede_stats['ocupacion_total'] / sede_stats['capacidad_total']) * 100, 1
+            return "NORMAL"
+
+    def _crear_tabla_resumen_departamental(self):
+        """Tabla resumen con las categorías del departamento."""
+        datos_tabla = []
+
+        for categoria in self.todas_categorias:
+            df_categoria = self.df[self.df["nombre_capacidad_instalada"] == categoria]
+
+            if len(df_categoria) > 0:
+                capacidad = int(df_categoria["cantidad_ci_TOTAL_REPS"].sum())
+                ocupacion = int(df_categoria["total_ingresos_paciente_servicio"].sum())
+                disponible = capacidad - ocupacion
+                porcentaje = (
+                    round((ocupacion / capacidad * 100), 1) if capacidad > 0 else 0
                 )
-            else:
-                sede_stats['porcentaje_ocupacion'] = 0
-            
-            # Por servicio en esta sede
-            for tipo_servicio in self.mapeo_servicios.keys():
-                df_servicio_sede = df_sede[df_sede['tipo_servicio'] == tipo_servicio]
-                cap = int(df_servicio_sede['cantidad_ci_TOTAL_REPS'].sum())
-                ocup = int(df_servicio_sede['total_ingresos_paciente_servicio'].sum())
-                
-                sede_stats[f'{tipo_servicio}_capacidad'] = cap
-                sede_stats[f'{tipo_servicio}_ocupacion'] = ocup
-                sede_stats[f'{tipo_servicio}_porcentaje'] = round((ocup / cap * 100), 1) if cap > 0 else 0
-            
-            stats['sedes'].append(sede_stats)
-        
-        return stats
-    
-    def _obtener_estadisticas_otros_municipios(self):
-        """Obtener estadísticas de municipios diferentes a Ibagué."""
-        df_otros = self.df[self.df['municipio_sede_prestador'] != 'Ibagué']
-        
-        if df_otros.empty:
+                municipios = df_categoria["municipio_sede_prestador"].nunique()
+                ips = df_categoria["nombre_prestador"].nunique()
+
+                estado = self._determinar_estado(porcentaje)
+
+                datos_tabla.append(
+                    [
+                        categoria,
+                        f"{capacidad:,}",
+                        f"{ocupacion:,}",
+                        f"{disponible:,}",
+                        f"{porcentaje}%",
+                        str(municipios),
+                        str(ips),
+                        estado,
+                    ]
+                )
+
+        # Totales generales
+        total_capacidad = int(self.df["cantidad_ci_TOTAL_REPS"].sum())
+        total_ocupacion = int(self.df["total_ingresos_paciente_servicio"].sum())
+        total_disponible = total_capacidad - total_ocupacion
+        total_porcentaje = (
+            round((total_ocupacion / total_capacidad * 100), 1)
+            if total_capacidad > 0
+            else 0
+        )
+        total_municipios = self.df["municipio_sede_prestador"].nunique()
+        total_ips = self.df["nombre_prestador"].nunique()
+
+        estado_general = self._determinar_estado(total_porcentaje)
+
+        datos_tabla.append(
+            [
+                "TOTAL DEPARTAMENTO",
+                f"{total_capacidad:,}",
+                f"{total_ocupacion:,}",
+                f"{total_disponible:,}",
+                f"{total_porcentaje}%",
+                str(total_municipios),
+                str(total_ips),
+                estado_general,
+            ]
+        )
+
+        headers = [
+            "Tipo de Servicio",
+            "Capacidad\nInstalada",
+            "Ocupación\nActual",
+            "Disponible",
+            "% Ocupación",
+            "Municipios",
+            "IPS",
+            "Estado",
+        ]
+
+        return [headers] + datos_tabla
+
+    def _crear_tabla_ips_por_municipio(self, municipio):
+        """Crear tabla IPS específica por municipio."""
+        df_municipio = self.df[self.df["municipio_sede_prestador"] == municipio]
+
+        if df_municipio.empty:
             return None
-        
-        # Agrupar por municipio
-        stats_municipios = []
-        
-        for municipio in df_otros['municipio_sede_prestador'].unique():
-            df_municipio = df_otros[df_otros['municipio_sede_prestador'] == municipio]
-            
-            municipio_stats = {
-                'municipio': municipio,
-                'prestadores': df_municipio['nombre_prestador'].nunique(),
-                'sedes': df_municipio['nombre_sede_prestador'].nunique(),
-                'niveles_atencion': list(df_municipio['nivel_atencion_limpio'].unique())
-            }
-            
-            # Por tipo de servicio
-            for tipo_servicio in self.mapeo_servicios.keys():
-                df_servicio = df_municipio[df_municipio['tipo_servicio'] == tipo_servicio]
-                
-                capacidad = int(df_servicio['cantidad_ci_TOTAL_REPS'].sum())
-                ocupacion = int(df_servicio['total_ingresos_paciente_servicio'].sum())
-                disponible = int(df_servicio['disponible'].sum())
-                
-                municipio_stats[f'{tipo_servicio}_capacidad'] = capacidad
-                municipio_stats[f'{tipo_servicio}_ocupacion'] = ocupacion
-                municipio_stats[f'{tipo_servicio}_disponible'] = disponible
-                municipio_stats[f'{tipo_servicio}_porcentaje'] = round(
-                    (ocupacion / capacidad * 100) if capacidad > 0 else 0, 1
-                )
-            
-            # Totales del municipio
-            municipio_stats['total_capacidad'] = int(df_municipio['cantidad_ci_TOTAL_REPS'].sum())
-            municipio_stats['total_ocupacion'] = int(df_municipio['total_ingresos_paciente_servicio'].sum())
-            municipio_stats['total_disponible'] = int(df_municipio['disponible'].sum())
-            municipio_stats['total_porcentaje'] = round(
-                (municipio_stats['total_ocupacion'] / municipio_stats['total_capacidad'] * 100)
-                if municipio_stats['total_capacidad'] > 0 else 0, 1
+
+        datos_tabla = []
+
+        # Agrupar por IPS
+        for ips in df_municipio["nombre_prestador"].unique():
+            df_ips = df_municipio[df_municipio["nombre_prestador"] == ips]
+
+            # Totales por IPS
+            total_cap_ips = int(df_ips["cantidad_ci_TOTAL_REPS"].sum())
+            total_ocup_ips = int(df_ips["total_ingresos_paciente_servicio"].sum())
+            total_disp_ips = total_cap_ips - total_ocup_ips
+            total_porc_ips = (
+                round((total_ocup_ips / total_cap_ips * 100), 1)
+                if total_cap_ips > 0
+                else 0
             )
-            
-            stats_municipios.append(municipio_stats)
-        
-        return sorted(stats_municipios, key=lambda x: x['total_capacidad'], reverse=True)
-    
-    def mostrar_debug_clasificacion(self):
-        """Función de debugging para mostrar cómo se están clasificando los tipos de capacidad."""
-        if self.df is None:
-            print("❌ No hay datos cargados para mostrar debug")
-            return
-        
-        print("🔍" + "="*80)
-        print("   DEBUG: ANÁLISIS DE CLASIFICACIÓN POR TIPOS DE SERVICIO")
-        print("="*82)
-        
-        # Mostrar keywords usadas
-        print("📋 KEYWORDS UTILIZADAS PARA CLASIFICACIÓN:")
-        for tipo_servicio, info in self.mapeo_servicios.items():
-            print(f"   🔹 {info['nombre'].upper()}:")
-            keywords_str = ", ".join(info['keywords'])
-            print(f"      Keywords: {keywords_str}")
-        print()
-        
-        # Mostrar tipos únicos y su clasificación
-        print("📊 TIPOS DE CAPACIDAD Y SU CLASIFICACIÓN:")
-        tipos_clasificacion = []
-        
-        for tipo in sorted(self.df['nombre_capacidad_instalada'].unique()):
-            clasificacion = self._clasificar_servicio(tipo)
-            capacidad = self.df[self.df['nombre_capacidad_instalada'] == tipo]['cantidad_ci_TOTAL_REPS'].sum()
-            ocupacion = self.df[self.df['nombre_capacidad_instalada'] == tipo]['total_ingresos_paciente_servicio'].sum()
-            
-            tipos_clasificacion.append({
-                'tipo': tipo,
-                'clasificacion': clasificacion,
-                'capacidad': capacidad,
-                'ocupacion': ocupacion
-            })
-        
-        # Agrupar por clasificación
-        for servicio in ['observacion', 'cuidado_critico', 'hospitalizacion']:
-            tipos_servicio = [t for t in tipos_clasificacion if t['clasificacion'] == servicio]
-            
-            if tipos_servicio:
-                print(f"   🔹 {self.mapeo_servicios[servicio]['nombre'].upper()}:")
-                for tipo in tipos_servicio:
-                    print(f"      • {tipo['tipo']} → Cap: {tipo['capacidad']}, Ocup: {tipo['ocupacion']}")
-            else:
-                print(f"   ❌ {self.mapeo_servicios[servicio]['nombre'].upper()}: SIN DATOS")
-        
-        print("="*82)
-        
-        # Sugerencias para observación si está vacía
-        obs_data = self.df[self.df['tipo_servicio'] == 'observacion']
-        if obs_data.empty:
-            print("💡 SUGERENCIAS PARA OBSERVACIÓN/URGENCIAS:")
-            print("   Si no se están clasificando correctamente los tipos de observación,")
-            print("   revise estos tipos que podrían ser observación:")
-            
-            posibles_obs = []
-            for tipo in self.df['nombre_capacidad_instalada'].unique():
-                tipo_lower = tipo.lower()
-                if any(word in tipo_lower for word in ['camilla', 'consulta', 'proced', 'emerg']):
-                    posibles_obs.append(tipo)
-            
-            for tipo in posibles_obs[:10]:
-                print(f"      • {tipo}")
-            print()
-    
-    def generar_informe_pdf(self, archivo_salida=None):
-        """Generar el informe PDF con la nueva estructura."""
+
+            estado_ips = self._determinar_estado(total_porc_ips)
+
+            # Fila resumen IPS
+            nombre_ips_corto = ips[:50] + "..." if len(ips) > 50 else ips
+            datos_tabla.append(
+                [
+                    f"🏥 {nombre_ips_corto}",
+                    f"{total_cap_ips:,}",
+                    f"{total_ocup_ips:,}",
+                    f"{total_disp_ips:,}",
+                    f"{total_porc_ips}%",
+                    estado_ips,
+                ]
+            )
+
+            # Detalles por categoría de esta IPS (solo las que tiene)
+            categorias_ips = df_ips["nombre_capacidad_instalada"].unique()
+            for categoria in sorted(categorias_ips):
+                df_cat_ips = df_ips[df_ips["nombre_capacidad_instalada"] == categoria]
+
+                if len(df_cat_ips) > 0:
+                    cap = int(df_cat_ips["cantidad_ci_TOTAL_REPS"].sum())
+                    ocup = int(df_cat_ips["total_ingresos_paciente_servicio"].sum())
+                    disp = cap - ocup
+                    porc = round((ocup / cap * 100), 1) if cap > 0 else 0
+
+                    estado_cat = self._determinar_estado(porc)
+
+                    # Nombre de categoría más corto
+                    cat_corto = categoria.replace("CAMAS-", "").replace("CAMILLAS-", "")
+
+                    datos_tabla.append(
+                        [
+                            f"   └─ {cat_corto}",
+                            f"{cap:,}",
+                            f"{ocup:,}",
+                            f"{disp:,}",
+                            f"{porc}%",
+                            estado_cat,
+                        ]
+                    )
+
+        # Total del municipio
+        total_cap_mun = int(df_municipio["cantidad_ci_TOTAL_REPS"].sum())
+        total_ocup_mun = int(df_municipio["total_ingresos_paciente_servicio"].sum())
+        total_disp_mun = total_cap_mun - total_ocup_mun
+        total_porc_mun = (
+            round((total_ocup_mun / total_cap_mun * 100), 1) if total_cap_mun > 0 else 0
+        )
+
+        estado_mun = self._determinar_estado(total_porc_mun)
+
+        datos_tabla.append(
+            [
+                f"📊 TOTAL {municipio.upper()}",
+                f"{total_cap_mun:,}",
+                f"{total_ocup_mun:,}",
+                f"{total_disp_mun:,}",
+                f"{total_porc_mun}%",
+                estado_mun,
+            ]
+        )
+
+        headers = [
+            "IPS / Tipo de Servicio",
+            "Capacidad\nInstalada",
+            "Ocupación\nActual",
+            "Disponible",
+            "% Ocupación",
+            "Estado",
+        ]
+
+        return [headers] + datos_tabla
+
+    def _crear_tabla_federico_lleras_final(self):
+        """Crear tabla final específica del Hospital Federico Lleras."""
+        df_federico = self.df[
+            self.df["nombre_prestador"].str.contains(
+                "FEDERICO LLERAS ACOSTA", case=False, na=False
+            )
+        ]
+
+        if df_federico.empty:
+            return None
+
+        datos_tabla = []
+
+        # Por cada categoría que tiene el Federico Lleras
+        categorias_federico = df_federico["nombre_capacidad_instalada"].unique()
+        for categoria in sorted(categorias_federico):
+            df_cat = df_federico[df_federico["nombre_capacidad_instalada"] == categoria]
+
+            if len(df_cat) > 0:
+                capacidad = int(df_cat["cantidad_ci_TOTAL_REPS"].sum())
+                ocupacion = int(df_cat["total_ingresos_paciente_servicio"].sum())
+                disponible = capacidad - ocupacion
+                porcentaje = (
+                    round((ocupacion / capacidad * 100), 1) if capacidad > 0 else 0
+                )
+                sedes = df_cat["nombre_sede_prestador"].nunique()
+
+                estado = self._determinar_estado(porcentaje)
+
+                # Nombre más corto para la tabla
+                cat_corto = categoria.replace("CAMAS-", "").replace("CAMILLAS-", "")
+
+                datos_tabla.append(
+                    [
+                        cat_corto,
+                        f"{capacidad:,}",
+                        f"{ocupacion:,}",
+                        f"{disponible:,}",
+                        f"{porcentaje}%",
+                        str(sedes),
+                        estado,
+                    ]
+                )
+
+        # Total Federico Lleras
+        total_capacidad = int(df_federico["cantidad_ci_TOTAL_REPS"].sum())
+        total_ocupacion = int(df_federico["total_ingresos_paciente_servicio"].sum())
+        total_disponible = total_capacidad - total_ocupacion
+        total_porcentaje = (
+            round((total_ocupacion / total_capacidad * 100), 1)
+            if total_capacidad > 0
+            else 0
+        )
+        total_sedes = df_federico["nombre_sede_prestador"].nunique()
+
+        estado_general = self._determinar_estado(total_porcentaje)
+
+        datos_tabla.append(
+            [
+                "TOTAL FEDERICO LLERAS",
+                f"{total_capacidad:,}",
+                f"{total_ocupacion:,}",
+                f"{total_disponible:,}",
+                f"{total_porcentaje}%",
+                str(total_sedes),
+                estado_general,
+            ]
+        )
+
+        headers = [
+            "Tipo de Servicio",
+            "Capacidad\nInstalada",
+            "Ocupación\nActual",
+            "Disponible",
+            "% Ocupación",
+            "Sedes",
+            "Estado",
+        ]
+
+        return [headers] + datos_tabla
+
+    def _crear_estilo_tabla_con_colores(self):
+        """Crear estilo de tabla con colores en columna estado."""
+        return TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(COLORS["primary"])),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, 0), 8),
+                ("FONTSIZE", (0, 1), (-1, -1), 7),
+                ("BOTTOMPADDING", (0, 0), (-1, 0), 8),
+                ("BACKGROUND", (0, 1), (-1, -1), colors.beige),
+                ("GRID", (0, 0), (-1, -1), 1, colors.black),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                (
+                    "ALIGN",
+                    (0, 1),
+                    (0, -1),
+                    "LEFT",
+                ),  # Nombres IPS alineados a la izquierda
+            ]
+        )
+
+    def _aplicar_colores_estado(self, tabla_style, tabla_data, col_estado_index):
+        """Aplicar colores en la columna de estado."""
+        for i, fila in enumerate(tabla_data[1:], 1):  # Saltar encabezado
+            if len(fila) > col_estado_index:
+                estado = fila[col_estado_index]
+                if "CRÍTICO" in estado:
+                    tabla_style.add(
+                        "BACKGROUND",
+                        (col_estado_index, i),
+                        (col_estado_index, i),
+                        colors.HexColor("#FFCDD2"),
+                    )
+                    tabla_style.add(
+                        "TEXTCOLOR",
+                        (col_estado_index, i),
+                        (col_estado_index, i),
+                        colors.HexColor("#B71C1C"),
+                    )
+                elif "ADVERTENCIA" in estado:
+                    tabla_style.add(
+                        "BACKGROUND",
+                        (col_estado_index, i),
+                        (col_estado_index, i),
+                        colors.HexColor("#FFF3E0"),
+                    )
+                    tabla_style.add(
+                        "TEXTCOLOR",
+                        (col_estado_index, i),
+                        (col_estado_index, i),
+                        colors.HexColor("#E65100"),
+                    )
+                else:  # NORMAL
+                    tabla_style.add(
+                        "BACKGROUND",
+                        (col_estado_index, i),
+                        (col_estado_index, i),
+                        colors.HexColor("#E8F5E8"),
+                    )
+                    tabla_style.add(
+                        "TEXTCOLOR",
+                        (col_estado_index, i),
+                        (col_estado_index, i),
+                        colors.HexColor("#2E7D32"),
+                    )
+
+    def generar_informe_completo(self, archivo_salida=None):
+        """Generar informe completo con optimización de espacios y títulos unidos a tablas."""
         if archivo_salida is None:
             timestamp = self.fecha_procesamiento.strftime("%Y%m%d_%H%M%S")
-            archivo_salida = f"informe_tolima_servicios_{timestamp}.pdf"
-        
-        print(f"📄 Generando informe PDF: {archivo_salida}")
-        
-        # Configurar documento
-        doc = SimpleDocTemplate(archivo_salida, pagesize=A4,
-                              rightMargin=0.5*inch, leftMargin=0.5*inch,
-                              topMargin=0.5*inch, bottomMargin=0.5*inch)
-        
-        # Elementos del documento
+            archivo_salida = f"informe_hospitalario_completo_{timestamp}.pdf"
+
+        print(f"📄 Generando informe hospitalario completo: {archivo_salida}")
+
+        # Extraer fecha de registro del Excel
+        fecha_registro = self._extraer_fecha_registro()
+
+        # Márgenes ajustados para evitar superposición
+        header_height_inches = 95 / 72.0  # Convertir puntos a inches (≈ 1.32 inches)
+
+        doc = HospitalDocTemplate(
+            archivo_salida,
+            fecha_registro=fecha_registro,  # Pasar fecha de registro
+            pagesize=A4,
+            rightMargin=0.4 * inch,
+            leftMargin=0.4 * inch,
+            topMargin=(header_height_inches + 0.25) * inch,  # Margen superior aumentado
+            bottomMargin=0.4 * inch,
+        )
+
         elementos = []
-        
+
         # Estilos
         estilos = getSampleStyleSheet()
-        
+
         titulo_principal = ParagraphStyle(
-            'TituloPrincipal',
-            parent=estilos['Title'],
-            fontSize=18,
-            spaceAfter=30,
-            textColor=colors.HexColor(COLORS['primary']),
+            "TituloPrincipal",
+            parent=estilos["Title"],
+            fontSize=16,
+            spaceAfter=20,
+            textColor=colors.HexColor(COLORS["primary"]),
             alignment=TA_CENTER,
-            fontName='Helvetica-Bold'
+            fontName="Helvetica-Bold",
         )
-        
+
         titulo_seccion = ParagraphStyle(
-            'TituloSeccion',
-            parent=estilos['Heading1'],
-            fontSize=14,
-            spaceAfter=15,
-            textColor=colors.HexColor(COLORS['primary']),
-            fontName='Helvetica-Bold'
-        )
-        
-        titulo_subseccion = ParagraphStyle(
-            'TituloSubseccion',
-            parent=estilos['Heading2'],
+            "TituloSeccion",
+            parent=estilos["Heading1"],
             fontSize=12,
-            spaceAfter=10,
-            textColor=colors.HexColor(COLORS['accent']),
-            fontName='Helvetica-Bold'
+            spaceAfter=12,
+            spaceBefore=6,  # Espaciado antes del título
+            textColor=colors.HexColor(COLORS["primary"]),
+            fontName="Helvetica-Bold",
         )
-        
+
         texto_normal = ParagraphStyle(
-            'TextoNormal',
-            parent=estilos['Normal'],
-            fontSize=10,
-            spaceAfter=10,
-            alignment=TA_JUSTIFY
+            "TextoNormal",
+            parent=estilos["Normal"],
+            fontSize=9,
+            spaceAfter=8,
+            spaceBefore=4,  # Espaciado antes del texto
+            alignment=TA_JUSTIFY,
         )
-        
+
+        texto_small = ParagraphStyle(
+            "TextoSmall",
+            parent=estilos["Normal"],
+            fontSize=8,
+            spaceAfter=6,
+            spaceBefore=3,  # Espaciado antes del texto pequeño
+            alignment=TA_JUSTIFY,
+        )
+
         # ======================================================================
-        # PORTADA
+        # PORTADA OPTIMIZADA
         # ======================================================================
-        elementos.append(Spacer(1, 1*inch))
-        
-        elementos.append(Paragraph("INFORME DE CAPACIDAD HOSPITALARIA", titulo_principal))
-        elementos.append(Paragraph("DEPARTAMENTO DEL TOLIMA", titulo_principal))
-        elementos.append(Paragraph("Análisis por Tipos de Servicio y Niveles de Atención", titulo_seccion))
-        
-        elementos.append(Spacer(1, 0.5*inch))
-        
-        fecha_str = self.fecha_procesamiento.strftime("%d de %B de %Y")
-        elementos.append(Paragraph(f"<b>Fecha de Procesamiento:</b> {fecha_str}", texto_normal))
-        elementos.append(Paragraph(f"<b>Secretaría de Salud del Tolima</b>", texto_normal))
-        elementos.append(Paragraph(f"<b>Sistema de Monitoreo Hospitalario</b>", texto_normal))
-        
-        elementos.append(PageBreak())
-        
-        # ======================================================================
-        # 1. RESUMEN EJECUTIVO DEL TOLIMA
-        # ======================================================================
-        elementos.append(Paragraph("1. RESUMEN EJECUTIVO - DEPARTAMENTO DEL TOLIMA", titulo_seccion))
-        
-        stats_tolima = self._obtener_estadisticas_tolima()
-        
-        elementos.append(Paragraph("📊 <b>Estadísticas Generales del Departamento</b>", titulo_subseccion))
-        
-        resumen_texto = f"""
-        <b>Cobertura Territorial:</b><br/>
-        • Total de municipios con reporte: {stats_tolima['general']['total_municipios']}<br/>
-        • Prestadores de salud activos: {stats_tolima['general']['total_prestadores']}<br/>
-        • Sedes hospitalarias registradas: {stats_tolima['general']['total_sedes']}<br/><br/>
-        
-        <b>Capacidad Hospitalaria Departamental:</b><br/>
-        • Capacidad total instalada: {stats_tolima['general']['capacidad_total_departamento']:,} unidades<br/>
-        • Ocupación actual: {stats_tolima['general']['ocupacion_total_departamento']:,} pacientes<br/>
-        • Unidades disponibles: {stats_tolima['general']['disponible_total_departamento']:,}<br/>
-        • Porcentaje de ocupación: {stats_tolima['general']['porcentaje_ocupacion_departamento']}%<br/><br/>
+        elementos.append(Spacer(1, 0.3 * inch))  # Espaciador inicial
+        elementos.append(
+            Paragraph("INFORME DE CAPACIDAD HOSPITALARIA", titulo_principal)
+        )
+
+        # EXPLICACIÓN DE UMBRALES
+        elementos.append(Spacer(1, 0.2 * inch))
+        elementos.append(Paragraph("UMBRALES DE ESTADO DE OCUPACIÓN", titulo_seccion))
+
+        explicacion_umbrales = f"""
+        • <b>🟢 NORMAL:</b> Menos del {UMBRALES['advertencia']}% de ocupación<br/>
+        • <b>🟡 ADVERTENCIA:</b> Entre {UMBRALES['advertencia']}% y {UMBRALES['critico']-1}% de ocupación<br/>
+        • <b>🔴 CRÍTICO:</b> {UMBRALES['critico']}% o más de ocupación<br/>
         """
-        
-        elementos.append(Paragraph(resumen_texto, texto_normal))
-        
-        # Estadísticas por tipo de servicio
-        elementos.append(Paragraph("🏥 <b>Análisis por Tipos de Servicio</b>", titulo_subseccion))
-        
-        for tipo_servicio, info in self.mapeo_servicios.items():
-            if tipo_servicio in stats_tolima:
-                stats = stats_tolima[tipo_servicio]
-                
-                # Determinar estado
-                porcentaje = stats['porcentaje_ocupacion']
-                if porcentaje >= UMBRALES['critico']:
-                    estado = "🔴 CRÍTICO"
-                    estado_desc = "requiere atención inmediata"
-                elif porcentaje >= UMBRALES['advertencia']:
-                    estado = "🟡 ADVERTENCIA"
-                    estado_desc = "requiere monitoreo"
-                else:
-                    estado = "🟢 NORMAL"
-                    estado_desc = "funcionando dentro de parámetros normales"
-                
-                servicio_texto = f"""
-                <b>{info['nombre']} - {estado}</b><br/>
-                • Capacidad instalada: {stats['capacidad_total']:,} unidades<br/>
-                • Ocupación actual: {stats['ocupacion_total']:,} pacientes ({stats['porcentaje_ocupacion']}%)<br/>
-                • Unidades disponibles: {stats['disponible']:,}<br/>
-                • Municipios con este servicio: {stats['municipios']}<br/>
-                • Prestadores: {stats['prestadores']} | Sedes: {stats['sedes']}<br/>
-                • Estado: <i>{estado_desc}</i><br/><br/>
-                """
-                
-                elementos.append(Paragraph(servicio_texto, texto_normal))
-        
-        # Estadísticas por nivel de atención
-        elementos.append(Paragraph("🎯 <b>Análisis por Niveles de Atención</b>", titulo_subseccion))
-        
-        for nivel, info in self.mapeo_niveles.items():
-            if nivel in stats_tolima['niveles']:
-                stats = stats_tolima['niveles'][nivel]
-                
-                porcentaje = stats['porcentaje_ocupacion']
-                if porcentaje >= UMBRALES['critico']:
-                    estado = "🔴"
-                elif porcentaje >= UMBRALES['advertencia']:
-                    estado = "🟡"
-                else:
-                    estado = "🟢"
-                
-                nivel_texto = f"""
-                <b>{estado} {info['nombre']} ({info['descripcion']})</b><br/>
-                • Capacidad: {stats['capacidad_total']:,} unidades | Ocupación: {stats['ocupacion_total']:,} ({stats['porcentaje_ocupacion']}%)<br/>
-                • Municipios: {stats['municipios']} | Prestadores: {stats['prestadores']}<br/>
-                """
-                
-                elementos.append(Paragraph(nivel_texto, texto_normal))
-        
-        # Agregar información de N/A si existe
-        if 'N/A' in stats_tolima['niveles']:
-            stats = stats_tolima['niveles']['N/A']
-            elementos.append(Paragraph(f"""
-            <b>⚪ Sin Clasificar de Nivel</b><br/>
-            • Capacidad: {stats['capacidad_total']:,} unidades | Ocupación: {stats['ocupacion_total']:,} ({stats['porcentaje_ocupacion']}%)<br/>
-            • Municipios: {stats['municipios']} | Prestadores: {stats['prestadores']}<br/>
-            """, texto_normal))
-        
-        elementos.append(PageBreak())
-        
+
+        elementos.append(Paragraph(explicacion_umbrales, texto_normal))
+
         # ======================================================================
-        # 2. ANÁLISIS DETALLADO DE IBAGUÉ
+        # RESUMEN DEPARTAMENTAL EN LA PRIMERA PÁGINA (SI CABE)
         # ======================================================================
-        elementos.append(Paragraph("2. ANÁLISIS DETALLADO - IBAGUÉ (CAPITAL)", titulo_seccion))
-        
-        stats_ibague = self._obtener_estadisticas_ibague()
-        
-        if stats_ibague:
-            elementos.append(Paragraph("🏛️ <b>Ibagué como Centro de Referencia Departamental</b>", titulo_subseccion))
+        elementos.append(Spacer(1, 0.3 * inch))
+        elementos.append(
+            Paragraph("1. RESUMEN DEPARTAMENTO DEL TOLIMA", titulo_seccion)
+        )
+
+        # Crear tabla departamental
+        tabla_departamental = self._crear_tabla_resumen_departamental()
+        if tabla_departamental:
+            tabla_style = self._crear_estilo_tabla_con_colores()
+            self._aplicar_colores_estado(
+                tabla_style, tabla_departamental, 7
+            )  # Columna 7 es Estado
+
+            tabla_pdf = Table(tabla_departamental, repeatRows=1)
+            tabla_pdf.setStyle(tabla_style)
             
-            # Calcular participación de Ibagué
-            total_cap_ibague = stats_ibague['total']['capacidad_total']
-            total_ocup_ibague = stats_ibague['total']['ocupacion_total']
-            porcentaje_ibague = stats_ibague['total']['porcentaje_ocupacion']
-            
-            participacion_capacidad = round((total_cap_ibague / stats_tolima['general']['capacidad_total_departamento'] * 100), 1)
-            participacion_ocupacion = round((total_ocup_ibague / stats_tolima['general']['ocupacion_total_departamento'] * 100), 1)
-            
-            resumen_ibague = f"""
-            <b>Participación de Ibagué en el Sistema Departamental:</b><br/>
-            • Participación en capacidad total: {participacion_capacidad}% del departamento<br/>
-            • Participación en ocupación: {participacion_ocupacion}% del departamento<br/>
-            • Capacidad total de Ibagué: {total_cap_ibague:,} unidades<br/>
-            • Ocupación actual: {total_ocup_ibague:,} pacientes ({porcentaje_ibague}%)<br/>
-            • Unidades disponibles: {stats_ibague['total']['disponible']:,}<br/>
-            • Total de prestadores: {stats_ibague['total']['prestadores']}<br/>
-            • Total de sedes: {stats_ibague['total']['sedes']}<br/><br/>
-            """
-            
-            elementos.append(Paragraph(resumen_ibague, texto_normal))
-            
-            # Análisis por servicio en Ibagué
-            elementos.append(Paragraph("📋 <b>Detalle por Tipo de Servicio en Ibagué</b>", titulo_subseccion))
-            
-            for tipo_servicio, info in self.mapeo_servicios.items():
-                if tipo_servicio in stats_ibague:
-                    stats = stats_ibague[tipo_servicio]
-                    
-                    participacion_servicio = round((stats['capacidad_total'] / total_cap_ibague * 100), 1) if total_cap_ibague > 0 else 0
-                    
-                    # Estado del servicio
-                    porcentaje = stats['porcentaje_ocupacion']
-                    if porcentaje >= UMBRALES['critico']:
-                        estado = "🔴 CRÍTICO"
-                    elif porcentaje >= UMBRALES['advertencia']:
-                        estado = "🟡 ADVERTENCIA"
-                    else:
-                        estado = "🟢 NORMAL"
-                    
-                    servicio_ibague = f"""
-                    <b>{info['nombre']} - {estado}</b><br/>
-                    • Prestadores: {stats['prestadores']} | Sedes: {stats['sedes']}<br/>
-                    • Capacidad: {stats['capacidad_total']:,} unidades ({participacion_servicio}% del total de Ibagué)<br/>
-                    • Ocupación: {stats['ocupacion_total']:,} pacientes ({stats['porcentaje_ocupacion']}%)<br/>
-                    • Disponibles: {stats['disponible']:,} unidades<br/><br/>
-                    """
-                    
-                    elementos.append(Paragraph(servicio_ibague, texto_normal))
-        
-        elementos.append(PageBreak())
-        
+            # Usar KeepTogether para evitar que se divida mal
+            elementos.append(KeepTogether([tabla_pdf]))
+
         # ======================================================================
-        # 2.1. ANÁLISIS ESPECÍFICO DEL HOSPITAL FEDERICO LLERAS ACOSTA
+        # IBAGUÉ - OPTIMIZACIÓN: Título y tabla juntos (SIN PageBreak forzado)
         # ======================================================================
-        elementos.append(Paragraph("2.1. ANÁLISIS ESPECÍFICO - HOSPITAL FEDERICO LLERAS ACOSTA", titulo_seccion))
+        elementos.append(Spacer(1, 0.3 * inch))  # Separación mayor del resumen
         
-        stats_federico = self._obtener_estadisticas_federico_lleras()
-        
-        if stats_federico:
-            elementos.append(Paragraph("🏥 <b>Hospital Federico Lleras Acosta - Centro de Referencia Departamental</b>", titulo_subseccion))
+        tabla_ibague = self._crear_tabla_ips_por_municipio("Ibagué")
+        if tabla_ibague:
+            # Crear título de Ibagué
+            titulo_ibague = Paragraph("2. IBAGUÉ", titulo_seccion)
             
-            # Información general del Federico Lleras
-            total_cap_federico = stats_federico['total']['capacidad_total']
-            total_ocup_federico = stats_federico['total']['ocupacion_total']
-            porcentaje_federico = stats_federico['total']['porcentaje_ocupacion']
+            # Crear tabla
+            tabla_style = self._crear_estilo_tabla_con_colores()
+            self._aplicar_colores_estado(
+                tabla_style, tabla_ibague, 5
+            )  # Columna 5 es Estado
+
+            tabla_pdf = Table(tabla_ibague, repeatRows=1)
+            tabla_pdf.setStyle(tabla_style)
             
-            # Calcular participación respecto al total departamental
-            participacion_federico_dept = round((total_cap_federico / stats_tolima['general']['capacidad_total_departamento'] * 100), 1)
-            
-            # Calcular participación respecto a Ibagué (si existe)
-            participacion_federico_ibague = 0
-            if stats_ibague:
-                participacion_federico_ibague = round((total_cap_federico / stats_ibague['total']['capacidad_total'] * 100), 1)
-            
-            resumen_federico = f"""
-            <b>Posicionamiento del Hospital Federico Lleras Acosta:</b><br/>
-            • Participación en capacidad departamental: {participacion_federico_dept}% del total del Tolima<br/>"""
-            
-            if stats_ibague:
-                resumen_federico += f"• Participación en capacidad de Ibagué: {participacion_federico_ibague}% del total de la capital<br/>"
-            
-            resumen_federico += f"""• Capacidad total: {total_cap_federico:,} unidades hospitalarias<br/>
-            • Ocupación actual: {total_ocup_federico:,} pacientes ({porcentaje_federico}%)<br/>
-            • Unidades disponibles: {stats_federico['total']['disponible']:,}<br/>
-            • Número de sedes: {stats_federico['total']['sedes']}<br/>
-            • Municipios donde opera: {stats_federico['total']['municipios']}<br/>
-            • Tipos de capacidad diferentes: {stats_federico['total']['tipos_capacidad']}<br/><br/>
-            """
-            
-            elementos.append(Paragraph(resumen_federico, texto_normal))
-            
-            # Análisis por servicio en el Federico Lleras
-            elementos.append(Paragraph("📋 <b>Detalle por Tipo de Servicio - Federico Lleras</b>", titulo_subseccion))
-            
-            for tipo_servicio, info in self.mapeo_servicios.items():
-                if tipo_servicio in stats_federico and stats_federico[tipo_servicio]['capacidad_total'] > 0:
-                    stats = stats_federico[tipo_servicio]
-                    
-                    participacion_servicio = round((stats['capacidad_total'] / total_cap_federico * 100), 1) if total_cap_federico > 0 else 0
-                    
-                    # Estado del servicio
-                    porcentaje = stats['porcentaje_ocupacion']
-                    if porcentaje >= UMBRALES['critico']:
-                        estado = "🔴 CRÍTICO"
-                    elif porcentaje >= UMBRALES['advertencia']:
-                        estado = "🟡 ADVERTENCIA"
-                    else:
-                        estado = "🟢 NORMAL"
-                    
-                    servicio_federico = f"""
-                    <b>{info['nombre']} - {estado}</b><br/>
-                    • Sedes con este servicio: {stats['sedes']}<br/>
-                    • Capacidad: {stats['capacidad_total']:,} unidades ({participacion_servicio}% del total del hospital)<br/>
-                    • Ocupación: {stats['ocupacion_total']:,} pacientes ({stats['porcentaje_ocupacion']}%)<br/>
-                    • Disponibles: {stats['disponible']:,} unidades<br/>
-                    • Tipos de capacidad: {stats['tipos_capacidad']}<br/><br/>
-                    """
-                    
-                    elementos.append(Paragraph(servicio_federico, texto_normal))
+            # CORRECCIÓN: Mantener título y tabla juntos
+            elementos.append(KeepTogether([
+                titulo_ibague,
+                Spacer(1, 0.05 * inch),
+                tabla_pdf
+            ]))
         else:
-            elementos.append(Paragraph("⚠️ <b>Hospital Federico Lleras Acosta no encontrado en los datos</b>", titulo_subseccion))
-            elementos.append(Paragraph("No se pudo localizar el Hospital Federico Lleras Acosta en los datos proporcionados. Verifique el nombre del prestador en el archivo de datos.", texto_normal))
-        
+            elementos.append(Paragraph("2. IBAGUÉ", titulo_seccion))
+            elementos.append(
+                Paragraph("⚠️ No se encontraron datos para Ibagué", texto_normal)
+            )
+
         elementos.append(PageBreak())
-        
+
         # ======================================================================
-        # 3. ANÁLISIS DE OTROS MUNICIPIOS
+        # OTROS MUNICIPIOS - OPTIMIZACIÓN DE ESPACIOS
         # ======================================================================
-        elementos.append(Paragraph("3. ANÁLISIS DE OTROS MUNICIPIOS DEL TOLIMA", titulo_seccion))
-        
-        stats_otros = self._obtener_estadisticas_otros_municipios()
-        
-        if stats_otros:
-            # Resumen de otros municipios
-            total_otros_cap = sum(m['total_capacidad'] for m in stats_otros)
-            total_otros_ocup = sum(m['total_ocupacion'] for m in stats_otros)
-            porcentaje_otros = round((total_otros_ocup / total_otros_cap * 100), 1) if total_otros_cap > 0 else 0
+        elementos.append(Spacer(1, 0.1 * inch))
+        elementos.append(Paragraph("3. OTROS MUNICIPIOS DEL TOLIMA", titulo_seccion))
+
+        # Obtener municipios excluyendo Ibagué
+        otros_municipios = [
+            m for m in self.df["municipio_sede_prestador"].unique() if m != "Ibagué"
+        ]
+        otros_municipios.sort()
+
+        print(f"📋 Procesando {len(otros_municipios)} municipios con optimización de espacios...")
+
+        # Variables para controlar el flujo de páginas
+        municipios_en_pagina_actual = 0
+        espacio_usado_actual = 0
+        espacio_disponible_por_pagina = 550  # Puntos aproximados disponibles por página
+
+        for i, municipio in enumerate(otros_municipios):
+            # Crear tabla del municipio
+            tabla_municipio = self._crear_tabla_ips_por_municipio(municipio)
             
-            municipios_criticos = [m for m in stats_otros if m['total_porcentaje'] >= UMBRALES['critico']]
-            municipios_advertencia = [m for m in stats_otros if UMBRALES['advertencia'] <= m['total_porcentaje'] < UMBRALES['critico']]
-            
-            resumen_otros = f"""
-            <b>Panorama de Municipios (Excluyendo Ibagué):</b><br/>
-            • Total de municipios analizados: {len(stats_otros)}<br/>
-            • Capacidad total combinada: {total_otros_cap:,} unidades<br/>
-            • Ocupación total: {total_otros_ocup:,} pacientes ({porcentaje_otros}%)<br/>
-            • Municipios en estado crítico (≥90%): {len(municipios_criticos)}<br/>
-            • Municipios en advertencia (70-89%): {len(municipios_advertencia)}<br/><br/>
-            """
-            
-            elementos.append(Paragraph(resumen_otros, texto_normal))
-            
-            # Alertas críticas
-            if municipios_criticos:
-                elementos.append(Paragraph("🚨 <b>MUNICIPIOS EN ESTADO CRÍTICO</b>", titulo_subseccion))
+            if tabla_municipio:
+                # Crear título del municipio
+                titulo_municipio = Paragraph(f"3.{i+1}. {municipio.upper()}", titulo_seccion)
                 
-                for municipio in municipios_criticos:
-                    alerta_texto = f"""
-                    <b>{municipio['municipio']}</b> - {municipio['total_porcentaje']}% de ocupación<br/>
-                    • Capacidad: {municipio['total_capacidad']} | Ocupación: {municipio['total_ocupacion']}<br/>
-                    • Prestadores: {municipio['prestadores']} | Sedes: {municipio['sedes']}<br/>
-                    • Niveles de atención: {", ".join(municipio['niveles_atencion']) if municipio['niveles_atencion'] else "N/A"}<br/><br/>
-                    """
-                    elementos.append(Paragraph(alerta_texto, texto_normal))
-        
-        # ======================================================================
-        # 4. CONCLUSIONES Y RECOMENDACIONES
-        # ======================================================================
+                # Estimar altura de esta tabla + título
+                altura_estimada = self._estimar_altura_tabla(tabla_municipio)
+                altura_con_titulo = altura_estimada + 40  # Incluir espacio para título y spacer
+                
+                # Si esta tabla no cabe en la página actual, hacer PageBreak
+                if espacio_usado_actual + altura_con_titulo > espacio_disponible_por_pagina and municipios_en_pagina_actual > 0:
+                    elementos.append(PageBreak())
+                    elementos.append(Spacer(1, 0.1 * inch))
+                    municipios_en_pagina_actual = 0
+                    espacio_usado_actual = 0
+
+                # Crear y agregar tabla
+                tabla_style = self._crear_estilo_tabla_con_colores()
+                self._aplicar_colores_estado(
+                    tabla_style, tabla_municipio, 5
+                )  # Columna 5 es Estado
+
+                tabla_pdf = Table(tabla_municipio, repeatRows=1)
+                tabla_pdf.setStyle(tabla_style)
+                
+                # CORRECCIÓN: Mantener título y tabla juntos
+                elementos.append(KeepTogether([
+                    titulo_municipio,
+                    Spacer(1, 0.05 * inch),
+                    tabla_pdf,
+                    Spacer(1, 0.05 * inch)
+                ]))
+
+                # Actualizar contadores
+                municipios_en_pagina_actual += 1
+                espacio_usado_actual += altura_con_titulo + 5  # +5 por el spacer
+
+            else:
+                # Municipio sin datos - mantener título y mensaje juntos
+                titulo_municipio = Paragraph(f"3.{i+1}. {municipio.upper()}", titulo_seccion)
+                mensaje_sin_datos = Paragraph(
+                    f"⚠️ No se encontraron datos para {municipio}", texto_small
+                )
+                
+                # Mantener título y mensaje juntos
+                elementos.append(KeepTogether([
+                    titulo_municipio,
+                    Spacer(1, 0.02 * inch),
+                    mensaje_sin_datos,
+                    Spacer(1, 0.05 * inch)
+                ]))
+                
+                municipios_en_pagina_actual += 1
+                espacio_usado_actual += 35  # Poco espacio para municipios sin datos
+
         elementos.append(PageBreak())
-        elementos.append(Paragraph("4. CONCLUSIONES Y RECOMENDACIONES", titulo_seccion))
+
+        # ======================================================================
+        # HOSPITAL FEDERICO LLERAS - OPTIMIZACIÓN: Título y tabla juntos
+        # ======================================================================
+        elementos.append(Spacer(1, 0.1 * inch))
         
-        # Generar conclusiones automáticas
-        conclusiones = self._generar_conclusiones(stats_tolima, stats_ibague, stats_otros)
-        elementos.append(Paragraph(conclusiones, texto_normal))
-        
-        # Pie de página
-        elementos.append(Spacer(1, 1*inch))
-        pie_texto = f"""
-        <b>Informe generado por:</b> Sistema de Monitoreo Hospitalario<br/>
-        <b>Secretaría de Salud del Tolima</b><br/>
-        <b>Fecha y hora:</b> {self.fecha_procesamiento.strftime("%d/%m/%Y %H:%M:%S")}<br/>
-        <b>Desarrollado por:</b> Ing. José Miguel Santos<br/>
-        <b>Registros procesados:</b> {len(self.df):,} unidades de capacidad instalada
-        """
-        elementos.append(Paragraph(pie_texto, texto_normal))
-        
+        tabla_federico = self._crear_tabla_federico_lleras_final()
+        if tabla_federico:
+            # Crear título
+            titulo_federico = Paragraph("4. HOSPITAL FEDERICO LLERAS ACOSTA", titulo_seccion)
+            
+            # Estilo especial para Federico Lleras
+            tabla_style = TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(COLORS["danger"])),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("FONTSIZE", (0, 0), (-1, 0), 10),
+                    ("FONTSIZE", (0, 1), (-1, -1), 9),
+                    ("BOTTOMPADDING", (0, 0), (-1, 0), 12),
+                    ("BACKGROUND", (0, 1), (-1, -2), colors.beige),
+                    ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#E3F2FD")),
+                    ("GRID", (0, 0), (-1, -1), 1, colors.black),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ]
+            )
+
+            self._aplicar_colores_estado(
+                tabla_style, tabla_federico, 6
+            )  # Columna 6 es Estado
+
+            tabla_pdf = Table(tabla_federico, repeatRows=1)
+            tabla_pdf.setStyle(tabla_style)
+            
+            # CORRECCIÓN: Mantener título y tabla juntos
+            elementos.append(KeepTogether([
+                titulo_federico,
+                Spacer(1, 0.1 * inch),
+                tabla_pdf
+            ]))
+        else:
+            elementos.append(Paragraph("4. HOSPITAL FEDERICO LLERAS ACOSTA", titulo_seccion))
+            elementos.append(
+                Paragraph(
+                    "⚠️ <b>Hospital Federico Lleras Acosta no encontrado</b>",
+                    texto_normal,
+                )
+            )
+
+        # ======================================================================
+        # SECCIÓN DE FIRMAS INSTITUCIONALES
+        # ======================================================================
+        elementos.extend(self._crear_seccion_firmas())
+
         # Construir documento
         try:
             doc.build(elementos)
-            print(f"✅ Informe PDF generado exitosamente: {archivo_salida}")
+            print(f"✅ Informe hospitalario completo generado: {archivo_salida}")
+            print(f"📅 Fecha de registro utilizada: {fecha_registro}")
+            print(f"🎯 Optimización de espacios aplicada: Menos páginas en blanco")
             return archivo_salida
         except Exception as e:
             print(f"❌ Error generando PDF: {str(e)}")
             import traceback
+
             traceback.print_exc()
             return None
-    
-    def _generar_conclusiones(self, stats_tolima, stats_ibague, stats_otros):
-        """Generar conclusiones automáticas basadas en los datos."""
-        conclusiones = []
-        
-        # Análisis departamental
-        porcentaje_dept = stats_tolima['general']['porcentaje_ocupacion_departamento']
-        if porcentaje_dept >= UMBRALES['critico']:
-            conclusiones.append("🔴 <b>SITUACIÓN CRÍTICA DEPARTAMENTAL:</b> El Tolima presenta una ocupación hospitalaria crítica que requiere activación de protocolos de emergencia y redistribución de pacientes.")
-        elif porcentaje_dept >= UMBRALES['advertencia']:
-            conclusiones.append("🟡 <b>SITUACIÓN DE ADVERTENCIA:</b> El departamento del Tolima requiere monitoreo constante y preparación de medidas preventivas.")
-        else:
-            conclusiones.append("🟢 <b>SITUACIÓN CONTROLADA:</b> El sistema hospitalario del Tolima opera dentro de parámetros normales.")
-        
-        # Análisis por servicios
-        servicios_criticos = []
-        for tipo_servicio, info in self.mapeo_servicios.items():
-            if tipo_servicio in stats_tolima:
-                porcentaje = stats_tolima[tipo_servicio]['porcentaje_ocupacion']
-                if porcentaje >= UMBRALES['critico']:
-                    servicios_criticos.append(info['nombre'])
-        
-        if servicios_criticos:
-            conclusiones.append(f"⚠️ <b>SERVICIOS CRÍTICOS:</b> {', '.join(servicios_criticos)} presentan ocupación crítica y requieren atención inmediata.")
-        
-        # Análisis por niveles de atención
-        niveles_criticos = []
-        for nivel, info in self.mapeo_niveles.items():
-            if nivel in stats_tolima['niveles']:
-                porcentaje = stats_tolima['niveles'][nivel]['porcentaje_ocupacion']
-                if porcentaje >= UMBRALES['critico']:
-                    niveles_criticos.append(info['nombre'])
-        
-        if niveles_criticos:
-            conclusiones.append(f"🎯 <b>NIVELES CRÍTICOS:</b> {', '.join(niveles_criticos)} requieren refuerzo inmediato de recursos.")
-        
-        # Análisis de Ibagué
-        if stats_ibague:
-            total_cap_ibague = stats_ibague['total']['capacidad_total']
-            participacion = round((total_cap_ibague / stats_tolima['general']['capacidad_total_departamento'] * 100), 1)
-            conclusiones.append(f"🏛️ <b>PAPEL DE IBAGUÉ:</b> Como capital concentra el {participacion}% de la capacidad hospitalaria departamental, siendo el principal centro de referencia con {stats_ibague['total']['prestadores']} prestadores y {stats_ibague['total']['sedes']} sedes.")
-        
-        # Análisis de municipios
-        if stats_otros:
-            municipios_criticos = [m for m in stats_otros if m['total_porcentaje'] >= UMBRALES['critico']]
-            if municipios_criticos:
-                nombres = ", ".join([m['municipio'] for m in municipios_criticos[:3]])
-                if len(municipios_criticos) > 3:
-                    nombres += f" y {len(municipios_criticos)-3} más"
-                conclusiones.append(f"🚨 <b>MUNICIPIOS CRÍTICOS:</b> {nombres} requieren apoyo inmediato de la red departamental.")
-        
-        # Recomendaciones
-        recomendaciones = [
-            "<br/>📋 <b>RECOMENDACIONES INMEDIATAS:</b>",
-            "• Activar protocolos de referencia y contrarreferencia entre municipios",
-            "• Fortalecer la coordinación entre Ibagué y municipios periféricos",
-            "• Implementar monitoreo en tiempo real de ocupación por servicios y niveles",
-            "• Preparar planes de contingencia para redistribución de pacientes",
-            "• Reforzar personal médico en servicios con mayor ocupación",
-            "• Evaluar ampliación de capacidad en niveles de alta complejidad",
-            "• Mejorar la clasificación de niveles de atención en prestadores sin clasificar"
-        ]
-        
-        return "<br/>".join(conclusiones + ["<br/>"] + recomendaciones)
 
 
 def main():
-    """Función principal del programa."""
-    print("🏥" + "="*70)
-    print("   GENERADOR DE INFORMES DE CAPACIDAD HOSPITALARIA")
-    print("           DEPARTAMENTO DEL TOLIMA - POR SERVICIOS")
-    print("="*72)
+    """Función principal."""
+    print("🏥" + "=" * 70)
+    print("=" * 72)
     print("   Desarrollado por: Ing. José Miguel Santos")
     print("   Para: Secretaría de Salud del Tolima")
-    print("="*72)
-    
-    # Verificar argumentos
+    print("   VERSIÓN: Optimización de Espacios")
+    print("=" * 72)
+
     if len(sys.argv) < 2:
         print("📋 USO DEL PROGRAMA:")
-        print("   python hospital_report.py <archivo_excel> [archivo_salida.pdf]")
-        print("   python hospital_report.py <archivo_excel> --debug")
+        print("   python hospital_report.py <archivo_excel>")
         print("")
-        print("📊 EJEMPLOS:")
-        print("   python hospital_report.py datos_hospitalarios.xlsx")
-        print("   python hospital_report.py datos_hospitalarios.xlsx informe_tolima.pdf")
-        print("   python hospital_report.py datos_hospitalarios.xlsx --debug")
+        print("📊 EJEMPLO:")
+        print("   python hospital_report.py Detalle_Ocupacion_CI.xlsx")
         print("")
-        print("🔧 CARACTERÍSTICAS PRINCIPALES:")
-        print("   ✅ Análisis por tipos de servicio (Observación, Crítico, Hospitalización)")
-        print("   ✅ Análisis por niveles de atención (I, II, III, IV)")
-        print("   ✅ Estructura: Tolima → Ibagué → Federico Lleras → Otros Municipios")
-        print("   ✅ Gráficos optimizados y proporcionales")
-        print("   ✅ Tablas detalladas por prestador y sede")
-        print("   ✅ Alertas automáticas por umbrales de ocupación")
-        print("   ✅ Análisis específico del Hospital Federico Lleras Acosta")
-        print("")
-        print("🔍 MODO DEBUG:")
-        print("   Usar --debug para ver cómo se clasifican los tipos de capacidad")
-        print("   Útil para diagnosticar problemas de clasificación")
-        print("")
-        print("📋 COLUMNAS REQUERIDAS EN EL ARCHIVO EXCEL:")
-        print("   • municipio_sede_prestador: Municipio del departamento")
-        print("   • nombre_prestador: Prestador de salud")
-        print("   • nivel_de_atencion_prestador: Nivel de complejidad")
-        print("   • nombre_sede_prestador: Nombre de la sede")
-        print("   • nombre_capacidad_instalada: Tipo de cama/camilla")
-        print("   • cantidad_ci_TOTAL_REPS: Capacidad total")
-        print("   • total_ingresos_paciente_servicio: Pacientes ingresados")
+        print("🎯 CARACTERÍSTICAS OPTIMIZADAS:")
+        print("   ✅ Aprovechamiento inteligente de espacios")
+        print("   ✅ Saltos de página dinámicos")
+        print("   ✅ Resumen departamental en primera página")
+        print("   ✅ Menos páginas en blanco")
+        print("   ✅ Distribución estética del contenido")
         return
-    
+
     archivo_excel = sys.argv[1]
-    
-    # Verificar modo debug
-    modo_debug = len(sys.argv) > 2 and sys.argv[2] == '--debug'
-    archivo_salida = None if modo_debug else (sys.argv[2] if len(sys.argv) > 2 else None)
-    
-    # Verificar que el archivo existe
+
     if not os.path.exists(archivo_excel):
         print(f"❌ Error: El archivo '{archivo_excel}' no existe.")
         return
-    
-    # Crear generador de informes
-    generador = HospitalReportGenerator()
-    
+
+    # Crear generador
+    generador = HospitalCompletoGenerator()
+
     try:
-        # Cargar datos
+        # Cargar TODOS los datos
         if not generador.cargar_datos(archivo_excel):
-            print("❌ Error al cargar los datos. Verifique el formato del archivo.")
+            print("❌ Error al cargar los datos.")
             return
-        
-        # Modo debug
-        if modo_debug:
-            generador.mostrar_debug_clasificacion()
-            return
-        
-        # Generar informe (versión simplificada por ahora)
-        archivo_generado = generador.generar_informe_pdf(archivo_salida)
-        
+
+        # Generar informe completo
+        archivo_generado = generador.generar_informe_completo()
+
         if archivo_generado:
-            print("🎉" + "="*70)
-            print("✅ PROCESAMIENTO COMPLETADO")
-            print(f"📄 Los datos fueron procesados correctamente")
-            print(f"📊 Datos procesados: {len(generador.df):,} registros")
-            print(f"🏥 Municipios: {generador.df['municipio_sede_prestador'].nunique()}")
-            print(f"🏛️ Prestadores: {generador.df['nombre_prestador'].nunique()}")
-            print(f"📍 Sedes: {generador.df['nombre_sede_prestador'].nunique()}")
-            print(f"🎯 Servicios analizados: {list(generador.df['tipo_servicio'].unique())}")
-            print(f"🔢 Niveles de atención: {list(generador.df['nivel_atencion_limpio'].unique())}")
-            
-            # Verificar si se encontró el Federico Lleras
-            stats_federico = generador._obtener_estadisticas_federico_lleras()
-            if stats_federico:
-                print(f"🏥 Hospital Federico Lleras: ✅ ENCONTRADO ({stats_federico['total']['capacidad_total']:,} unidades)")
-            else:
-                print(f"🏥 Hospital Federico Lleras: ❌ NO ENCONTRADO")
-            
-            print("="*72)
-            
-            # Verificar si hay problemas con la clasificación
-            obs_data = generador.df[generador.df['tipo_servicio'] == 'observacion']
-            if obs_data.empty:
-                print("⚠️  ADVERTENCIA: No se encontraron datos para Observación/Urgencias")
-                print("   💡 Ejecute con --debug para diagnosticar: python hospital_report.py archivo.xlsx --debug")
+            print("🎉" + "=" * 70)
+            print("✅ INFORME HOSPITALARIO OPTIMIZADO GENERADO EXITOSAMENTE")
+            print(f"📄 Archivo: {archivo_generado}")
+            print(f"📊 Registros procesados: {len(generador.df):,}")
+
+            # Estadísticas finales
+            total_capacidad = generador.df["cantidad_ci_TOTAL_REPS"].sum()
+            total_ocupacion = generador.df["total_ingresos_paciente_servicio"].sum()
+            porcentaje_general = (
+                round((total_ocupacion / total_capacidad * 100), 1)
+                if total_capacidad > 0
+                else 0
+            )
+
+            print(
+                f"   🏘️ Municipios incluidos: {generador.df['municipio_sede_prestador'].nunique()}"
+            )
+            print(f"   🏥 IPS analizadas: {generador.df['nombre_prestador'].nunique()}")
+            print(f"   📋 Categorías de servicios: {len(generador.todas_categorias)}")
+            print(f"   🎯 Capacidad total: {total_capacidad:,} unidades")
+            print(
+                f"   📈 Ocupación total: {total_ocupacion:,} pacientes ({porcentaje_general}%)"
+            )
+
+            print("=" * 72)
+            print("🎯 OPTIMIZACIONES APLICADAS:")
+            print("   • Resumen departamental en primera página")
+            print("   • Títulos y tablas siempre juntos (sin títulos huérfanos)")
+            print("   • Saltos de página inteligentes por espacio disponible")
+            print("   • Estimación de altura de tablas para mejor distribución")
+            print("   • KeepTogether para evitar división de tablas")
+            print("   • Aprovechamiento máximo del espacio de cada página")
+            print("=" * 72)
         else:
             print("❌ Error al generar el informe.")
-            
+
     except Exception as e:
         print(f"❌ Error inesperado: {str(e)}")
         import traceback
+
         traceback.print_exc()
 
 
