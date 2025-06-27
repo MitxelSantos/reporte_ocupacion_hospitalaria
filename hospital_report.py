@@ -3,6 +3,11 @@
 Sistema Capacidad Hospitalaria del Tolima
 Discriminado por IPS y Municipio
 
+VERSIÓN OPTIMIZADA:
+- ✅ Aprovechamiento inteligente de espacios
+- ✅ Saltos de página dinámicos
+- ✅ Mejor distribución del contenido
+
 Desarrollado por: Ing. José Miguel Santos
 Para: Secretaría de Salud del Tolima
 """
@@ -24,6 +29,7 @@ from reportlab.platypus import (
     PageBreak,
     Table,
     TableStyle,
+    KeepTogether,
 )
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT, TA_JUSTIFY
 from reportlab.pdfgen import canvas
@@ -50,7 +56,7 @@ COLORS = {
     "header_bg": "#8B4B5C",  # Vinotinto más claro para fondo encabezado
 }
 
-# Umbrales de ocupación
+# Umbrales de ocupación (manteniendo los cambios del usuario)
 UMBRALES = {
     "critico": 90,  # ≥90% crítico
     "advertencia": 70,  # 70-89% advertencia
@@ -180,7 +186,7 @@ class HospitalDocTemplate(BaseDocTemplate):
 
 
 class HospitalCompletoGenerator:
-    """Generador completo con las categorías del Excel."""
+    """Generador completo con optimización de espacios."""
 
     def __init__(self):
         self.df = None
@@ -311,6 +317,20 @@ class HospitalCompletoGenerator:
             print(f"⚠️ Error extrayendo fecha_registro: {e}, usando fecha actual")
             return datetime.now()
 
+    def _estimar_altura_tabla(self, tabla_data, ancho_columnas=None):
+        """Estimar altura aproximada de una tabla en puntos."""
+        if not tabla_data:
+            return 0
+
+        # Altura aproximada por fila (incluyendo padding y borders)
+        altura_fila_header = 25  # Header más alto
+        altura_fila_normal = 15  # Filas normales
+
+        num_filas = len(tabla_data)
+        altura_estimada = altura_fila_header + (num_filas - 1) * altura_fila_normal
+
+        return altura_estimada
+
     def _crear_seccion_firmas(self):
         """Crear sección de firmas institucionales."""
         estilos = getSampleStyleSheet()
@@ -324,16 +344,6 @@ class HospitalCompletoGenerator:
             spaceBefore=2,
             alignment=TA_LEFT,
             fontName="Helvetica",
-        )
-
-        estilo_firma_bold = ParagraphStyle(
-            "EstiloFirmaBold",
-            parent=estilos["Normal"],
-            fontSize=9,
-            spaceAfter=4,
-            spaceBefore=2,
-            alignment=TA_LEFT,
-            fontName="Helvetica-Bold",
         )
 
         estilo_firma_center = ParagraphStyle(
@@ -731,7 +741,7 @@ class HospitalCompletoGenerator:
                     )
 
     def generar_informe_completo(self, archivo_salida=None):
-        """Generar informe completo con fecha de registro y firmas institucionales."""
+        """Generar informe completo con optimización de espacios y títulos unidos a tablas."""
         if archivo_salida is None:
             timestamp = self.fecha_procesamiento.strftime("%Y%m%d_%H%M%S")
             archivo_salida = f"informe_hospitalario_completo_{timestamp}.pdf"
@@ -798,36 +808,34 @@ class HospitalCompletoGenerator:
         )
 
         # ======================================================================
-        # PORTADA - Con espaciado adicional para evitar superposición
+        # PORTADA OPTIMIZADA
         # ======================================================================
-        elementos.append(Spacer(1, 0.3 * inch))  # Espaciador aumentado
+        elementos.append(Spacer(1, 0.3 * inch))  # Espaciador inicial
         elementos.append(
             Paragraph("INFORME DE CAPACIDAD HOSPITALARIA", titulo_principal)
         )
 
-        # EXPLICACIÓN DE UMBRALES AL INICIO
-        elementos.append(Spacer(1, 0.3 * inch))
+        # EXPLICACIÓN DE UMBRALES
+        elementos.append(Spacer(1, 0.2 * inch))
         elementos.append(Paragraph("UMBRALES DE ESTADO DE OCUPACIÓN", titulo_seccion))
 
         explicacion_umbrales = f"""
         • <b>🟢 NORMAL:</b> Menos del {UMBRALES['advertencia']}% de ocupación<br/>
         • <b>🟡 ADVERTENCIA:</b> Entre {UMBRALES['advertencia']}% y {UMBRALES['critico']-1}% de ocupación<br/>
-        • <b>🔴 CRÍTICO:</b> {UMBRALES['critico']}% o más de ocupación<br/><br/>
+        • <b>🔴 CRÍTICO:</b> {UMBRALES['critico']}% o más de ocupación<br/>
         """
 
         elementos.append(Paragraph(explicacion_umbrales, texto_normal))
-        elementos.append(PageBreak())
 
         # ======================================================================
-        # 1. RESUMEN DEPARTAMENTAL
+        # RESUMEN DEPARTAMENTAL EN LA PRIMERA PÁGINA (SI CABE)
         # ======================================================================
-        elementos.append(
-            Spacer(1, 0.1 * inch)
-        )  # CORRECCIÓN: Espaciador inicial en cada página
+        elementos.append(Spacer(1, 0.3 * inch))
         elementos.append(
             Paragraph("1. RESUMEN DEPARTAMENTO DEL TOLIMA", titulo_seccion)
         )
 
+        # Crear tabla departamental
         tabla_departamental = self._crear_tabla_resumen_departamental()
         if tabla_departamental:
             tabla_style = self._crear_estilo_tabla_con_colores()
@@ -837,19 +845,23 @@ class HospitalCompletoGenerator:
 
             tabla_pdf = Table(tabla_departamental, repeatRows=1)
             tabla_pdf.setStyle(tabla_style)
-            elementos.append(tabla_pdf)
+
+            # Usar KeepTogether para evitar que se divida mal
+            elementos.append(KeepTogether([tabla_pdf]))
 
         elementos.append(PageBreak())
 
         # ======================================================================
-        # 2. IBAGUÉ
+        # IBAGUÉ - OPTIMIZACIÓN: Título y tabla juntos
         # ======================================================================
-        elementos.append(Spacer(1, 0.1 * inch))  # Espaciador inicial
-        elementos.append(Paragraph("2. IBAGUÉ", titulo_seccion))
         elementos.append(Spacer(1, 0.1 * inch))
 
         tabla_ibague = self._crear_tabla_ips_por_municipio("Ibagué")
         if tabla_ibague:
+            # Crear título de Ibagué
+            titulo_ibague = Paragraph("2. IBAGUÉ", titulo_seccion)
+
+            # Crear tabla
             tabla_style = self._crear_estilo_tabla_con_colores()
             self._aplicar_colores_estado(
                 tabla_style, tabla_ibague, 5
@@ -857,8 +869,13 @@ class HospitalCompletoGenerator:
 
             tabla_pdf = Table(tabla_ibague, repeatRows=1)
             tabla_pdf.setStyle(tabla_style)
-            elementos.append(tabla_pdf)
+
+            # CORRECCIÓN: Mantener título y tabla juntos
+            elementos.append(
+                KeepTogether([titulo_ibague, Spacer(1, 0.05 * inch), tabla_pdf])
+            )
         else:
+            elementos.append(Paragraph("2. IBAGUÉ", titulo_seccion))
             elementos.append(
                 Paragraph("⚠️ No se encontraron datos para Ibagué", texto_normal)
             )
@@ -866,28 +883,54 @@ class HospitalCompletoGenerator:
         elementos.append(PageBreak())
 
         # ======================================================================
-        # 3. OTROS MUNICIPIOS
+        # OTROS MUNICIPIOS - OPTIMIZACIÓN DE ESPACIOS
         # ======================================================================
         elementos.append(Spacer(1, 0.1 * inch))
         elementos.append(Paragraph("3. OTROS MUNICIPIOS DEL TOLIMA", titulo_seccion))
 
-        # Obtener TODOS los municipios excepto Ibagué
+        # Obtener municipios excluyendo Ibagué
         otros_municipios = [
             m for m in self.df["municipio_sede_prestador"].unique() if m != "Ibagué"
         ]
         otros_municipios.sort()
 
-        print(f"📋 Procesando {len(otros_municipios)} municipios...")
+        print(
+            f"📋 Procesando {len(otros_municipios)} municipios con optimización de espacios..."
+        )
+
+        # Variables para controlar el flujo de páginas
+        municipios_en_pagina_actual = 0
+        espacio_usado_actual = 0
+        espacio_disponible_por_pagina = 550  # Puntos aproximados disponibles por página
 
         for i, municipio in enumerate(otros_municipios):
-            if i > 0 and i % 4 == 0:  # Nueva página cada 4 municipios
-                elementos.append(PageBreak())
-                elementos.append(Spacer(1, 0.1 * inch))  # Espaciador tras PageBreak
-
-            elementos.append(Paragraph(f"3.{i+1}. {municipio.upper()}", titulo_seccion))
-
+            # Crear tabla del municipio
             tabla_municipio = self._crear_tabla_ips_por_municipio(municipio)
+
             if tabla_municipio:
+                # Crear título del municipio
+                titulo_municipio = Paragraph(
+                    f"3.{i+1}. {municipio.upper()}", titulo_seccion
+                )
+
+                # Estimar altura de esta tabla + título
+                altura_estimada = self._estimar_altura_tabla(tabla_municipio)
+                altura_con_titulo = (
+                    altura_estimada + 40
+                )  # Incluir espacio para título y spacer
+
+                # Si esta tabla no cabe en la página actual, hacer PageBreak
+                if (
+                    espacio_usado_actual + altura_con_titulo
+                    > espacio_disponible_por_pagina
+                    and municipios_en_pagina_actual > 0
+                ):
+                    elementos.append(PageBreak())
+                    elementos.append(Spacer(1, 0.1 * inch))
+                    municipios_en_pagina_actual = 0
+                    espacio_usado_actual = 0
+
+                # Crear y agregar tabla
                 tabla_style = self._crear_estilo_tabla_con_colores()
                 self._aplicar_colores_estado(
                     tabla_style, tabla_municipio, 5
@@ -895,29 +938,61 @@ class HospitalCompletoGenerator:
 
                 tabla_pdf = Table(tabla_municipio, repeatRows=1)
                 tabla_pdf.setStyle(tabla_style)
-                elementos.append(tabla_pdf)
-                elementos.append(Spacer(1, 0.1 * inch))
-            else:
+
+                # CORRECCIÓN: Mantener título y tabla juntos
                 elementos.append(
-                    Paragraph(
-                        f"⚠️ No se encontraron datos para {municipio}", texto_small
+                    KeepTogether(
+                        [
+                            titulo_municipio,
+                            Spacer(1, 0.05 * inch),
+                            tabla_pdf,
+                            Spacer(1, 0.05 * inch),
+                        ]
                     )
                 )
-                elementos.append(Spacer(1, 0.05 * inch))
+
+                # Actualizar contadores
+                municipios_en_pagina_actual += 1
+                espacio_usado_actual += altura_con_titulo + 5  # +5 por el spacer
+
+            else:
+                # Municipio sin datos - mantener título y mensaje juntos
+                titulo_municipio = Paragraph(
+                    f"3.{i+1}. {municipio.upper()}", titulo_seccion
+                )
+                mensaje_sin_datos = Paragraph(
+                    f"⚠️ No se encontraron datos para {municipio}", texto_small
+                )
+
+                # Mantener título y mensaje juntos
+                elementos.append(
+                    KeepTogether(
+                        [
+                            titulo_municipio,
+                            Spacer(1, 0.02 * inch),
+                            mensaje_sin_datos,
+                            Spacer(1, 0.05 * inch),
+                        ]
+                    )
+                )
+
+                municipios_en_pagina_actual += 1
+                espacio_usado_actual += 35  # Poco espacio para municipios sin datos
 
         elementos.append(PageBreak())
 
         # ======================================================================
-        # 4. HOSPITAL FEDERICO LLERAS (TABLA FINAL)
+        # HOSPITAL FEDERICO LLERAS - OPTIMIZACIÓN: Título y tabla juntos
         # ======================================================================
         elementos.append(Spacer(1, 0.1 * inch))
-        elementos.append(
-            Paragraph("4. HOSPITAL FEDERICO LLERAS ACOSTA", titulo_seccion)
-        )
-        elementos.append(Spacer(1, 0.15 * inch))
 
         tabla_federico = self._crear_tabla_federico_lleras_final()
         if tabla_federico:
+            # Crear título
+            titulo_federico = Paragraph(
+                "4. HOSPITAL FEDERICO LLERAS ACOSTA", titulo_seccion
+            )
+
             # Estilo especial para Federico Lleras
             tabla_style = TableStyle(
                 [
@@ -941,27 +1016,20 @@ class HospitalCompletoGenerator:
 
             tabla_pdf = Table(tabla_federico, repeatRows=1)
             tabla_pdf.setStyle(tabla_style)
-            elementos.append(tabla_pdf)
 
-            # Información adicional
-            elementos.append(Spacer(1, 0.2 * inch))
-
-            # Calcular participación
-            total_departamento = self.df["cantidad_ci_TOTAL_REPS"].sum()
-            df_federico = self.df[
-                self.df["nombre_prestador"].str.contains(
-                    "FEDERICO LLERAS ACOSTA", case=False, na=False
-                )
-            ]
-            total_federico = (
-                df_federico["cantidad_ci_TOTAL_REPS"].sum()
-                if not df_federico.empty
-                else 0
+            # CORRECCIÓN: Mantener título y tabla juntos
+            elementos.append(
+                KeepTogether([titulo_federico, Spacer(1, 0.1 * inch), tabla_pdf])
             )
-            participacion = (
-                round((total_federico / total_departamento * 100), 1)
-                if total_departamento > 0
-                else 0
+        else:
+            elementos.append(
+                Paragraph("4. HOSPITAL FEDERICO LLERAS ACOSTA", titulo_seccion)
+            )
+            elementos.append(
+                Paragraph(
+                    "⚠️ <b>Hospital Federico Lleras Acosta no encontrado</b>",
+                    texto_normal,
+                )
             )
 
         # ======================================================================
@@ -974,6 +1042,7 @@ class HospitalCompletoGenerator:
             doc.build(elementos)
             print(f"✅ Informe hospitalario completo generado: {archivo_salida}")
             print(f"📅 Fecha de registro utilizada: {fecha_registro}")
+            print(f"🎯 Optimización de espacios aplicada: Menos páginas en blanco")
             return archivo_salida
         except Exception as e:
             print(f"❌ Error generando PDF: {str(e)}")
@@ -989,6 +1058,7 @@ def main():
     print("=" * 72)
     print("   Desarrollado por: Ing. José Miguel Santos")
     print("   Para: Secretaría de Salud del Tolima")
+    print("   VERSIÓN: Optimización de Espacios")
     print("=" * 72)
 
     if len(sys.argv) < 2:
@@ -998,6 +1068,12 @@ def main():
         print("📊 EJEMPLO:")
         print("   python hospital_report.py Detalle_Ocupacion_CI.xlsx")
         print("")
+        print("🎯 CARACTERÍSTICAS OPTIMIZADAS:")
+        print("   ✅ Aprovechamiento inteligente de espacios")
+        print("   ✅ Saltos de página dinámicos")
+        print("   ✅ Resumen departamental en primera página")
+        print("   ✅ Menos páginas en blanco")
+        print("   ✅ Distribución estética del contenido")
         return
 
     archivo_excel = sys.argv[1]
@@ -1020,7 +1096,7 @@ def main():
 
         if archivo_generado:
             print("🎉" + "=" * 70)
-            print("✅ INFORME HOSPITALARIO COMPLETO GENERADO EXITOSAMENTE")
+            print("✅ INFORME HOSPITALARIO OPTIMIZADO GENERADO EXITOSAMENTE")
             print(f"📄 Archivo: {archivo_generado}")
             print(f"📊 Registros procesados: {len(generador.df):,}")
 
@@ -1043,27 +1119,14 @@ def main():
                 f"   📈 Ocupación total: {total_ocupacion:,} pacientes ({porcentaje_general}%)"
             )
 
-            # Verificar Federico Lleras
-            df_federico = generador.df[
-                generador.df["nombre_prestador"].str.contains(
-                    "FEDERICO LLERAS ACOSTA", case=False, na=False
-                )
-            ]
-            if not df_federico.empty:
-                print(f"   🏥 Hospital Federico Lleras: ✅ ENCONTRADO")
-            else:
-                print(f"   🏥 Hospital Federico Lleras: ❌ NO ENCONTRADO")
-
             print("=" * 72)
-            print("📋 INFORME INCLUYE:")
-            print("   • Fecha de registro desde Excel")
-            print("   • Logo institucional Gobernacion.png")
-            print("   • Header sin superposición de texto")
-            print("   • Resumen con todas las categorías del Excel")
-            print("   • Ibagué (prioritario) con todas sus IPS")
-            print("   • Todos los municipios con sus respectivas IPS")
-            print("   • Tabla final específica Hospital Federico Lleras")
-            print("   • Firmas institucionales al final del documento")
+            print("🎯 OPTIMIZACIONES APLICADAS:")
+            print("   • Resumen departamental en primera página")
+            print("   • Títulos y tablas siempre juntos (sin títulos huérfanos)")
+            print("   • Saltos de página inteligentes por espacio disponible")
+            print("   • Estimación de altura de tablas para mejor distribución")
+            print("   • KeepTogether para evitar división de tablas")
+            print("   • Aprovechamiento máximo del espacio de cada página")
             print("=" * 72)
         else:
             print("❌ Error al generar el informe.")
