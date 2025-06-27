@@ -1,15 +1,7 @@
 #!/usr/bin/env python3
 """
-Sistema Hospitalario Tolima - Completo
-TODAS las categorías del Excel + TODOS los municipios
+Sistema Capacidad Hospitalaria del Tolima
 Discriminado por IPS y Municipio
-
-CATEGORÍAS INCLUIDAS (10 tipos):
-- CAMAS-Adultos, CAMAS-Pediátrica
-- CAMAS-Cuidado Intensivo Adulto/Pediátrico
-- CAMAS-Cuidado Intermedio Adulto/Pediátrico
-- CAMAS-Intensiva Adultos
-- CAMILLAS-Observación (Adultos Hombres/Mujeres/Pediátrica)
 
 Desarrollado por: Ing. José Miguel Santos
 Para: Secretaría de Salud del Tolima
@@ -38,6 +30,12 @@ from reportlab.pdfgen import canvas
 from reportlab.platypus.doctemplate import PageTemplate, BaseDocTemplate
 from reportlab.platypus.frames import Frame
 
+# Para manejo de fechas del Excel
+try:
+    from dateutil import parser
+except ImportError:
+    print("⚠️ dateutil no disponible, usando datetime básico")
+
 warnings.filterwarnings("ignore")
 
 # Configuración global
@@ -54,126 +52,135 @@ COLORS = {
 
 # Umbrales de ocupación
 UMBRALES = {
-    "critico": 85,  # ≥85% crítico
-    "advertencia": 70,  # 70-84% advertencia
+    "critico": 90,  # ≥90% crítico
+    "advertencia": 70,  # 70-89% advertencia
     "normal": 0,  # <70% normal
 }
 
 
 class HospitalDocTemplate(BaseDocTemplate):
-    """Template con encabezado institucional corregido."""
+    """Template con encabezado institucional usando fecha de registro del Excel."""
 
-    def __init__(self, filename, **kwargs):
+    def __init__(self, filename, fecha_registro=None, **kwargs):
         self.allowSplitting = 1
         BaseDocTemplate.__init__(self, filename, **kwargs)
 
-        # Frame con espacio adecuado para encabezado
+        # Fecha del registro (desde Excel) o actual como fallback
+        self.fecha_registro = fecha_registro or datetime.now()
+
+        # Header height definido como constante de clase
+        self.header_height = 95  # Aumentado para evitar superposición (puntos)
+        self.header_height_inches = self.header_height / 72.0  # Conversión a inches
+
+        # Frame con márgenes consistentes
         frame = Frame(
-            0.4 * inch,
-            0.4 * inch,
-            self.pagesize[0] - 0.8 * inch,
-            self.pagesize[1] - 1.3 * inch,  # Espacio suficiente para encabezado
+            0.4 * inch,  # Left margin
+            0.4 * inch,  # Bottom margin
+            self.pagesize[0] - 0.8 * inch,  # Width (page width - left - right margins)
+            self.pagesize[1]
+            - (self.header_height_inches + 0.2) * inch
+            - 0.4 * inch,  # Height ajustada
             id="normal",
+            leftPadding=6,
+            bottomPadding=6,
+            rightPadding=6,
+            topPadding=6,
         )
 
         template = PageTemplate(id="test", frames=frame, onPage=self.add_page_header)
         self.addPageTemplates([template])
 
     def add_page_header(self, canvas, doc):
-        """Agregar encabezado institucional con proporciones correctas."""
+        """Agregar encabezado institucional con fecha de registro del Excel."""
         canvas.saveState()
 
-        header_height = 85  # Altura más controlada
         page_width = doc.pagesize[0]
+        page_height = doc.pagesize[1]
 
-        # Fondo del encabezado (color más tenue)
+        # Usar height definido en __init__
+        header_height = self.header_height
+
+        # Fondo del encabezado con posición fija
         canvas.setFillColor(colors.HexColor(COLORS["header_bg"]))
-        canvas.rect(
-            0, doc.pagesize[1] - header_height, page_width, header_height, fill=1
-        )
+        canvas.rect(0, page_height - header_height, page_width, header_height, fill=1)
 
-        # Logo (lado izquierdo, tamaño proporcionado)
-        logo_path = self._find_logo()
-        if logo_path:
+        # Logo fijo - Gobernacion.png
+        logo_path = "Gobernacion.png"
+        if os.path.exists(logo_path):
             try:
+                logo_x = 15
+                logo_y = page_height - header_height + 15
+                logo_size = 65
+
                 canvas.drawImage(
                     logo_path,
-                    10,
-                    doc.pagesize[1] - header_height + 10,
-                    width=65,
-                    height=65,
+                    logo_x,
+                    logo_y,
+                    width=logo_size,
+                    height=logo_size,
                     mask="auto",
                 )
             except Exception as e:
-                print(f"⚠️ Error cargando logo: {e}")
+                print(f"⚠️ Error cargando logo Gobernacion.png: {e}")
+        else:
+            print(f"⚠️ Logo no encontrado: {logo_path}")
 
-        # Texto del encabezado (centrado, con espaciado adecuado)
+        # Posiciones Y fijas calculadas desde la parte superior
         canvas.setFillColor(colors.whitesmoke)
 
-        # GOBERNACIÓN DEL TOLIMA
+        # Texto principal - GOBERNACIÓN DEL TOLIMA
+        y_titulo = page_height - 25
         canvas.setFont("Helvetica-Bold", 16)
-        canvas.drawCentredString(
-            page_width / 2, doc.pagesize[1] - 22, "GOBERNACIÓN DEL TOLIMA"
-        )
+        canvas.drawCentredString(page_width / 2, y_titulo, "GOBERNACIÓN DEL TOLIMA")
 
         # NIT
+        y_nit = page_height - 42
         canvas.setFont("Helvetica", 10)
-        canvas.drawCentredString(
-            page_width / 2, doc.pagesize[1] - 35, "NIT: 800.113.672-7"
-        )
+        canvas.drawCentredString(page_width / 2, y_nit, "NIT: 800.113.672-7")
 
         # SECRETARIA DE SALUD
+        y_secretaria = page_height - 58
         canvas.setFont("Helvetica-Bold", 12)
-        canvas.drawCentredString(
-            page_width / 2, doc.pagesize[1] - 50, "SECRETARIA DE SALUD"
-        )
+        canvas.drawCentredString(page_width / 2, y_secretaria, "SECRETARIA DE SALUD")
 
         # DIRECCION DE SEGURIDAD SOCIAL
+        y_direccion = page_height - 75
         canvas.setFont("Helvetica-Bold", 10)
         canvas.drawCentredString(
-            page_width / 2, doc.pagesize[1] - 65, "DIRECCION DE SEGURIDAD SOCIAL"
+            page_width / 2, y_direccion, "DIRECCION DE SEGURIDAD SOCIAL"
         )
 
-        # Fecha y página (lado derecho, posición ajustada)
-        fecha_str = datetime.now().strftime("%d/%m/%Y %H:%M")
+        # Información lateral con fecha de registro del Excel
         canvas.setFont("Helvetica", 8)
-        canvas.drawRightString(
-            page_width - 15, doc.pagesize[1] - 25, f"Fecha: {fecha_str}"
-        )
-        canvas.drawRightString(
-            page_width - 15, doc.pagesize[1] - 35, f"Página {doc.page}"
-        )
 
-        # Línea separadora
+        # Fecha del registro (desde Excel)
+        if isinstance(self.fecha_registro, str):
+            fecha_str = self.fecha_registro
+        else:
+            fecha_str = self.fecha_registro.strftime("%d/%m/%Y %H:%M")
+
+        y_fecha = page_height - 30
+        canvas.drawRightString(page_width - 15, y_fecha, f"Fecha registro: {fecha_str}")
+
+        # Número de página
+        y_pagina = page_height - 42
+        canvas.drawRightString(page_width - 15, y_pagina, f"Página {doc.page}")
+
+        # Línea separadora en la parte inferior del encabezado
         canvas.setStrokeColor(colors.HexColor(COLORS["secondary"]))
-        canvas.setLineWidth(1.5)
+        canvas.setLineWidth(2)
         canvas.line(
             0,
-            doc.pagesize[1] - header_height,
+            page_height - header_height,
             page_width,
-            doc.pagesize[1] - header_height,
+            page_height - header_height,
         )
 
         canvas.restoreState()
 
-    def _find_logo(self):
-        """Buscar archivo de logo específico."""
-        posibles_logos = [
-            "Gobernacion.png",  # Nombre específico del usuario
-            "gobernacion.png",  # Variación minúscula
-            "logo_tolima.png",
-            "escudo_tolima.png",
-            "logo.png",
-        ]
-
-        for logo in posibles_logos:
-            if os.path.exists(logo):
-                return logo
-        return None
-
 
 class HospitalCompletoGenerator:
-    """Generador completo con TODAS las categorías del Excel."""
+    """Generador completo con las categorías del Excel."""
 
     def __init__(self):
         self.df = None
@@ -181,9 +188,9 @@ class HospitalCompletoGenerator:
         self.todas_categorias = []
 
     def cargar_datos(self, archivo_excel):
-        """Cargar TODOS los datos del Excel sin filtrar."""
+        """Cargar los datos del Excel."""
         try:
-            print(f"📂 Cargando TODOS los datos hospitalarios: {archivo_excel}")
+            print(f"📂 Cargando los datos hospitalarios: {archivo_excel}")
 
             self.df = pd.read_excel(archivo_excel)
             print(f"📊 Datos cargados: {len(self.df)} registros")
@@ -206,7 +213,7 @@ class HospitalCompletoGenerator:
                 return False
 
             self._procesar_datos()
-            print("✅ TODOS los datos procesados correctamente")
+            print("✅ Datos procesados correctamente")
             return True
 
         except Exception as e:
@@ -214,8 +221,8 @@ class HospitalCompletoGenerator:
             return False
 
     def _procesar_datos(self):
-        """Procesar TODOS los datos sin filtrar categorías."""
-        print("🔄 Procesando TODOS los datos hospitalarios...")
+        """Procesar los datos."""
+        print("🔄 Procesando datos hospitalarios...")
 
         # Limpiar nombres de columnas
         self.df.columns = self.df.columns.str.strip()
@@ -264,10 +271,137 @@ class HospitalCompletoGenerator:
         print(f"📋 Categorías encontradas: {len(self.todas_categorias)}")
 
         # Mostrar todas las categorías
-        print("📋 TODAS LAS CATEGORÍAS DEL EXCEL:")
+        print("📋 CATEGORÍAS DEL EXCEL:")
         for i, categoria in enumerate(self.todas_categorias, 1):
             count = len(self.df[self.df["nombre_capacidad_instalada"] == categoria])
             print(f"   {i:2d}. {categoria} ({count} registros)")
+
+    def _extraer_fecha_registro(self):
+        """Extraer fecha de registro del Excel."""
+        try:
+            if "fecha_registro" in self.df.columns:
+                # Obtener la fecha más reciente (o común) del Excel
+                fechas = self.df["fecha_registro"].dropna()
+                if not fechas.empty:
+                    # Usar la fecha más reciente
+                    fecha_registro = fechas.max()
+
+                    # Convertir a datetime si es string
+                    if isinstance(fecha_registro, str):
+                        try:
+                            from dateutil import parser
+
+                            fecha_registro = parser.parse(fecha_registro)
+                        except:
+                            # Si no se puede parsear, usar fecha actual
+                            print(
+                                "⚠️ No se pudo parsear fecha_registro, usando fecha actual"
+                            )
+                            return datetime.now()
+
+                    print(f"✅ Fecha de registro extraída: {fecha_registro}")
+                    return fecha_registro
+                else:
+                    print("⚠️ Columna fecha_registro vacía, usando fecha actual")
+                    return datetime.now()
+            else:
+                print("⚠️ Columna fecha_registro no encontrada, usando fecha actual")
+                return datetime.now()
+        except Exception as e:
+            print(f"⚠️ Error extrayendo fecha_registro: {e}, usando fecha actual")
+            return datetime.now()
+
+    def _crear_seccion_firmas(self):
+        """Crear sección de firmas institucionales."""
+        estilos = getSampleStyleSheet()
+
+        # Estilo para firmas
+        estilo_firma = ParagraphStyle(
+            "EstiloFirma",
+            parent=estilos["Normal"],
+            fontSize=9,
+            spaceAfter=4,
+            spaceBefore=2,
+            alignment=TA_LEFT,
+            fontName="Helvetica",
+        )
+
+        estilo_firma_bold = ParagraphStyle(
+            "EstiloFirmaBold",
+            parent=estilos["Normal"],
+            fontSize=9,
+            spaceAfter=4,
+            spaceBefore=2,
+            alignment=TA_LEFT,
+            fontName="Helvetica-Bold",
+        )
+
+        estilo_firma_center = ParagraphStyle(
+            "EstiloFirmaCenter",
+            parent=estilos["Normal"],
+            fontSize=9,
+            spaceAfter=4,
+            spaceBefore=2,
+            alignment=TA_CENTER,
+            fontName="Helvetica",
+        )
+
+        elementos_firmas = []
+
+        # Separador antes de firmas
+        elementos_firmas.append(Spacer(1, 0.4 * inch))
+        elementos_firmas.append(Paragraph("Cordialmente,", estilo_firma))
+        elementos_firmas.append(Spacer(1, 0.3 * inch))
+
+        # Crear tabla de firmas principales (2 columnas)
+        datos_firmas = [
+            [
+                Paragraph(
+                    "<b>DOUGLAS QUINTERO TÉLLEZ</b><br/>Director de Seguridad Social<br/>Secretaria de Salud del Tolima",
+                    estilo_firma_center,
+                ),
+                Paragraph(
+                    "<b>ALISON AMAYA REYES</b><br/>Directora Desarrollo de servicios<br/>Secretaria de Salud del Tolima",
+                    estilo_firma_center,
+                ),
+            ]
+        ]
+
+        tabla_firmas = Table(datos_firmas, colWidths=[3.5 * inch, 3.5 * inch])
+        tabla_firmas.setStyle(
+            TableStyle(
+                [
+                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
+                    ("FONTSIZE", (0, 0), (-1, -1), 9),
+                    ("TOPPADDING", (0, 0), (-1, -1), 20),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                ]
+            )
+        )
+
+        elementos_firmas.append(tabla_firmas)
+        elementos_firmas.append(Spacer(1, 0.2 * inch))
+
+        # Información adicional del equipo
+        elementos_firmas.append(
+            Paragraph(
+                "<b>Proyecto:</b> Adriana Cardozo – Luis Alberto Ortiz Contratistas",
+                estilo_firma,
+            )
+        )
+        elementos_firmas.append(
+            Paragraph("<b>Automatización:</b> José Miguel Santos", estilo_firma)
+        )
+        elementos_firmas.append(
+            Paragraph(
+                "<b>Reviso:</b> Aldo Eugenio Beltrán Rivera – Coordinador de Emergencias y Desastres – CRUET",
+                estilo_firma,
+            )
+        )
+
+        return elementos_firmas
 
     def _determinar_estado(self, porcentaje):
         """Determinar estado según umbral."""
@@ -279,7 +413,7 @@ class HospitalCompletoGenerator:
             return "NORMAL"
 
     def _crear_tabla_resumen_departamental(self):
-        """Tabla resumen con TODAS las categorías del departamento."""
+        """Tabla resumen con las categorías del departamento."""
         datos_tabla = []
 
         for categoria in self.todas_categorias:
@@ -351,7 +485,7 @@ class HospitalCompletoGenerator:
         return [headers] + datos_tabla
 
     def _crear_tabla_ips_por_municipio(self, municipio):
-        """Crear tabla IPS específica por municipio con TODAS las categorías."""
+        """Crear tabla IPS específica por municipio."""
         df_municipio = self.df[self.df["municipio_sede_prestador"] == municipio]
 
         if df_municipio.empty:
@@ -529,7 +663,7 @@ class HospitalCompletoGenerator:
         return [headers] + datos_tabla
 
     def _crear_estilo_tabla_con_colores(self):
-        """Crear estilo de tabla con colores solo en columna estado."""
+        """Crear estilo de tabla con colores en columna estado."""
         return TableStyle(
             [
                 ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(COLORS["primary"])),
@@ -552,7 +686,7 @@ class HospitalCompletoGenerator:
         )
 
     def _aplicar_colores_estado(self, tabla_style, tabla_data, col_estado_index):
-        """Aplicar colores solo en la columna de estado."""
+        """Aplicar colores en la columna de estado."""
         for i, fila in enumerate(tabla_data[1:], 1):  # Saltar encabezado
             if len(fila) > col_estado_index:
                 estado = fila[col_estado_index]
@@ -597,22 +731,28 @@ class HospitalCompletoGenerator:
                     )
 
     def generar_informe_completo(self, archivo_salida=None):
-        """Generar informe completo con todas las categorías."""
+        """Generar informe completo con fecha de registro y firmas institucionales."""
         if archivo_salida is None:
             timestamp = self.fecha_procesamiento.strftime("%Y%m%d_%H%M%S")
             archivo_salida = f"informe_hospitalario_completo_{timestamp}.pdf"
 
         print(f"📄 Generando informe hospitalario completo: {archivo_salida}")
 
-        # Usar template corregido
+        # Extraer fecha de registro del Excel
+        fecha_registro = self._extraer_fecha_registro()
+
+        # Márgenes ajustados para evitar superposición
+        header_height_inches = 95 / 72.0  # Convertir puntos a inches (≈ 1.32 inches)
+
         doc = HospitalDocTemplate(
             archivo_salida,
+            fecha_registro=fecha_registro,  # Pasar fecha de registro
             pagesize=A4,
             rightMargin=0.4 * inch,
             leftMargin=0.4 * inch,
-            topMargin=1.1 * inch,
+            topMargin=(header_height_inches + 0.25) * inch,  # Margen superior aumentado
             bottomMargin=0.4 * inch,
-        )  # Margen superior ajustado
+        )
 
         elementos = []
 
@@ -633,7 +773,8 @@ class HospitalCompletoGenerator:
             "TituloSeccion",
             parent=estilos["Heading1"],
             fontSize=12,
-            spaceAfter=10,
+            spaceAfter=12,
+            spaceBefore=6,  # Espaciado antes del título
             textColor=colors.HexColor(COLORS["primary"]),
             fontName="Helvetica-Bold",
         )
@@ -642,7 +783,8 @@ class HospitalCompletoGenerator:
             "TextoNormal",
             parent=estilos["Normal"],
             fontSize=9,
-            spaceAfter=6,
+            spaceAfter=8,
+            spaceBefore=4,  # Espaciado antes del texto
             alignment=TA_JUSTIFY,
         )
 
@@ -650,53 +792,40 @@ class HospitalCompletoGenerator:
             "TextoSmall",
             parent=estilos["Normal"],
             fontSize=8,
-            spaceAfter=4,
+            spaceAfter=6,
+            spaceBefore=3,  # Espaciado antes del texto pequeño
             alignment=TA_JUSTIFY,
         )
 
         # ======================================================================
-        # PORTADA
+        # PORTADA - Con espaciado adicional para evitar superposición
         # ======================================================================
-        elementos.append(Spacer(1, 0.2 * inch))
+        elementos.append(Spacer(1, 0.3 * inch))  # Espaciador aumentado
         elementos.append(
-            Paragraph("INFORME DE OCUPACIÓN HOSPITALARIA", titulo_principal)
-        )
-        elementos.append(Paragraph("DEPARTAMENTO DEL TOLIMA", titulo_principal))
-
-        fecha_str = self.fecha_procesamiento.strftime("%d de %B de %Y - %H:%M")
-        elementos.append(Spacer(1, 0.2 * inch))
-        elementos.append(
-            Paragraph(f"<b>Fecha de procesamiento:</b> {fecha_str}", texto_normal)
+            Paragraph("INFORME DE CAPACIDAD HOSPITALARIA", titulo_principal)
         )
 
         # EXPLICACIÓN DE UMBRALES AL INICIO
         elementos.append(Spacer(1, 0.3 * inch))
-        elementos.append(
-            Paragraph("CRITERIOS DE EVALUACIÓN DE OCUPACIÓN", titulo_seccion)
-        )
+        elementos.append(Paragraph("UMBRALES DE ESTADO DE OCUPACIÓN", titulo_seccion))
 
         explicacion_umbrales = f"""
-        <b>📊 Estados de Ocupación Hospitalaria:</b><br/>
         • <b>🟢 NORMAL:</b> Menos del {UMBRALES['advertencia']}% de ocupación<br/>
         • <b>🟡 ADVERTENCIA:</b> Entre {UMBRALES['advertencia']}% y {UMBRALES['critico']-1}% de ocupación<br/>
         • <b>🔴 CRÍTICO:</b> {UMBRALES['critico']}% o más de ocupación<br/><br/>
-        
-        <b>📋 Datos Incluidos:</b><br/>
-        • Total de registros analizados: {len(self.df):,}<br/>
-        • Municipios del Tolima: {self.df['municipio_sede_prestador'].nunique()}<br/>
-        • Instituciones Prestadoras (IPS): {self.df['nombre_prestador'].nunique()}<br/>
-        • Tipos de servicios: {len(self.todas_categorias)}<br/>
         """
 
         elementos.append(Paragraph(explicacion_umbrales, texto_normal))
-
         elementos.append(PageBreak())
 
         # ======================================================================
         # 1. RESUMEN DEPARTAMENTAL
         # ======================================================================
         elementos.append(
-            Paragraph("1. RESUMEN HOSPITALARIO DEPARTAMENTO DEL TOLIMA", titulo_seccion)
+            Spacer(1, 0.1 * inch)
+        )  # CORRECCIÓN: Espaciador inicial en cada página
+        elementos.append(
+            Paragraph("1. RESUMEN DEPARTAMENTO DEL TOLIMA", titulo_seccion)
         )
 
         tabla_departamental = self._crear_tabla_resumen_departamental()
@@ -713,19 +842,10 @@ class HospitalCompletoGenerator:
         elementos.append(PageBreak())
 
         # ======================================================================
-        # 2. IBAGUÉ (PRIORITARIO)
+        # 2. IBAGUÉ
         # ======================================================================
-        elementos.append(
-            Paragraph(
-                "2. IBAGUÉ - INSTITUCIONES PRESTADORAS DE SERVICIOS", titulo_seccion
-            )
-        )
-        elementos.append(
-            Paragraph(
-                "<b>Capital del Tolima - Centro de Referencia Departamental</b>",
-                texto_normal,
-            )
-        )
+        elementos.append(Spacer(1, 0.1 * inch))  # Espaciador inicial
+        elementos.append(Paragraph("2. IBAGUÉ", titulo_seccion))
         elementos.append(Spacer(1, 0.1 * inch))
 
         tabla_ibague = self._crear_tabla_ips_por_municipio("Ibagué")
@@ -746,8 +866,9 @@ class HospitalCompletoGenerator:
         elementos.append(PageBreak())
 
         # ======================================================================
-        # 3. OTROS MUNICIPIOS (TODOS LOS 47)
+        # 3. OTROS MUNICIPIOS
         # ======================================================================
+        elementos.append(Spacer(1, 0.1 * inch))
         elementos.append(Paragraph("3. OTROS MUNICIPIOS DEL TOLIMA", titulo_seccion))
 
         # Obtener TODOS los municipios excepto Ibagué
@@ -761,6 +882,7 @@ class HospitalCompletoGenerator:
         for i, municipio in enumerate(otros_municipios):
             if i > 0 and i % 4 == 0:  # Nueva página cada 4 municipios
                 elementos.append(PageBreak())
+                elementos.append(Spacer(1, 0.1 * inch))  # Espaciador tras PageBreak
 
             elementos.append(Paragraph(f"3.{i+1}. {municipio.upper()}", titulo_seccion))
 
@@ -788,11 +910,9 @@ class HospitalCompletoGenerator:
         # ======================================================================
         # 4. HOSPITAL FEDERICO LLERAS (TABLA FINAL)
         # ======================================================================
+        elementos.append(Spacer(1, 0.1 * inch))
         elementos.append(
             Paragraph("4. HOSPITAL FEDERICO LLERAS ACOSTA", titulo_seccion)
-        )
-        elementos.append(
-            Paragraph("<b>🏥 Centro de Referencia Departamental</b>", texto_normal)
         )
         elementos.append(Spacer(1, 0.15 * inch))
 
@@ -844,36 +964,16 @@ class HospitalCompletoGenerator:
                 else 0
             )
 
-            info_adicional = f"""
-            <b>📊 Participación Departamental:</b><br/>
-            • Capacidad total Federico Lleras: {total_federico:,} unidades<br/>
-            • Participación en capacidad del Tolima: {participacion}%<br/>
-            • Rol: Hospital de referencia departamental<br/>
-            • Servicios: {len(df_federico['nombre_capacidad_instalada'].unique())} tipos diferentes<br/>
-            """
-
-            elementos.append(Paragraph(info_adicional, texto_normal))
-        else:
-            elementos.append(
-                Paragraph(
-                    "⚠️ <b>Hospital Federico Lleras Acosta no encontrado</b>",
-                    texto_normal,
-                )
-            )
-
-        # Pie de página
-        elementos.append(Spacer(1, 0.3 * inch))
-        pie_texto = f"""
-        <b>Sistema de Monitoreo Hospitalario - Secretaría de Salud del Tolima</b><br/>
-        Procesamiento: {self.fecha_procesamiento.strftime("%d/%m/%Y %H:%M")}<br/>
-        Registros analizados: {len(self.df):,} | Municipios: {self.df['municipio_sede_prestador'].nunique()} | IPS: {self.df['nombre_prestador'].nunique()}
-        """
-        elementos.append(Paragraph(pie_texto, texto_small))
+        # ======================================================================
+        # SECCIÓN DE FIRMAS INSTITUCIONALES
+        # ======================================================================
+        elementos.extend(self._crear_seccion_firmas())
 
         # Construir documento
         try:
             doc.build(elementos)
             print(f"✅ Informe hospitalario completo generado: {archivo_salida}")
+            print(f"📅 Fecha de registro utilizada: {fecha_registro}")
             return archivo_salida
         except Exception as e:
             print(f"❌ Error generando PDF: {str(e)}")
@@ -886,8 +986,6 @@ class HospitalCompletoGenerator:
 def main():
     """Función principal."""
     print("🏥" + "=" * 70)
-    print("   SISTEMA HOSPITALARIO COMPLETO - TOLIMA")
-    print("   TODAS LAS CATEGORÍAS + TODOS LOS MUNICIPIOS")
     print("=" * 72)
     print("   Desarrollado por: Ing. José Miguel Santos")
     print("   Para: Secretaría de Salud del Tolima")
@@ -895,19 +993,11 @@ def main():
 
     if len(sys.argv) < 2:
         print("📋 USO DEL PROGRAMA:")
-        print("   python hospital_completo_corregido.py <archivo_excel>")
+        print("   python hospital_report.py <archivo_excel>")
         print("")
         print("📊 EJEMPLO:")
-        print("   python hospital_completo_corregido.py Detalle_Ocupacion_CI.xlsx")
+        print("   python hospital_report.py Detalle_Ocupacion_CI.xlsx")
         print("")
-        print("🎯 CARACTERÍSTICAS:")
-        print("   ✅ TODAS las 10 categorías del Excel")
-        print("   ✅ TODOS los 47 municipios del Tolima")
-        print("   ✅ Discriminado por IPS y municipio")
-        print("   ✅ Tabla específica Hospital Federico Lleras")
-        print("   ✅ Colores solo en columna estado")
-        print("   ✅ Explicación de umbrales al inicio")
-        print("   ✅ Encabezado institucional corregido")
         return
 
     archivo_excel = sys.argv[1]
@@ -966,13 +1056,14 @@ def main():
 
             print("=" * 72)
             print("📋 INFORME INCLUYE:")
-            print("   • Explicación de umbrales al inicio")
+            print("   • Fecha de registro desde Excel")
+            print("   • Logo institucional Gobernacion.png")
+            print("   • Header sin superposición de texto")
             print("   • Resumen con todas las categorías del Excel")
             print("   • Ibagué (prioritario) con todas sus IPS")
             print("   • Todos los municipios con sus respectivas IPS")
             print("   • Tabla final específica Hospital Federico Lleras")
-            print("   • Colores solo en columna de estado")
-            print("   • Encabezado institucional corregido")
+            print("   • Firmas institucionales al final del documento")
             print("=" * 72)
         else:
             print("❌ Error al generar el informe.")
