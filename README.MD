@@ -1,45 +1,53 @@
-# 🏥 Sistema de Análisis de Capacidad Hospitalaria - Tolima
+# 🏥 Sistema Optimizado de Monitoreo UCI - Tolima
 
-**Generador de Informes Final Optimizado de Capacidad Hospitalaria**  
+**Generador de Informes UCI Especializado**  
 *Secretaría de Salud del Tolima*
 
 ---
 
 ## 📋 Descripción
 
-Sistema integral para el análisis y generación de informes detallados sobre la capacidad hospitalaria del departamento del Tolima. Esta herramienta procesa datos de ocupación hospitalaria y genera reportes PDF profesionales con análisis exhaustivos, gráficos optimizados y alertas críticas.
+Sistema especializado para el monitoreo y análisis de **Unidades de Cuidados Intensivos (UCI)** del departamento del Tolima. Genera informes ejecutivos enfocados en la toma de decisiones críticas para el manejo de capacidad UCI.
 
 ### ✨ Características Principales
 
-- **🛏️ Análisis CAMAS vs CAMILLAS**: Distinción completa en todos los análisis
-- **📊 Gráficos Optimizados**: Visualizaciones de alta calidad con mayor altura vertical
-- **📋 Alertas en Tabla**: Formato estructurado para alertas críticas
-- **🗺️ Análisis Territorial**: Cobertura completa de municipios y prestadores
-- **🏥 Detalle Institucional**: Análisis específico por prestador y sede
-- **📈 Reportes PDF**: Documentos profesionales listos para presentación
+- **🎯 Enfoque UCI Específico**: Monitoreo especializado de UCIs
+- **📊 Dos Tipos de Informes**: Simple (estilo Word) y Dashboard (múltiples visualizaciones)
+- **🏥 Análisis Federico Lleras**: Sección específica del hospital de referencia
+- **🚨 Alertas Automáticas**: Sistema de alertas UCI por umbrales críticos
+- **📈 Categorización Precisa**: Basada en datos reales del sistema REPS
+- **🖼️ Logo Institucional**: Integración del logo de la Gobernación del Tolima
 
-## 🛠️ Tecnologías
+## 🎯 Categorías UCI Analizadas
 
-- **Python 3.8+**
-- **pandas**: Procesamiento de datos
-- **matplotlib**: Generación de gráficos
-- **numpy**: Cálculos numéricos
-- **reportlab**: Generación de PDF
-- **openpyxl**: Lectura de archivos Excel
+| Categoría | Descripción | Datos REPS |
+|-----------|-------------|------------|
+| **UCI Adulto** | Unidad de Cuidados Intensivos para Adultos | CAMAS-Cuidado Intensivo Adulto + CAMAS-Intensiva Adultos |
+| **UCI Intermedio Adulto** | Unidad de Cuidados Intermedios para Adultos | CAMAS-Cuidado Intermedio Adulto |
+| **UCI Pediátrico** | Unidad de Cuidados Intensivos Pediátricos | CAMAS-Cuidado Intensivo Pediátrico |
+| **UCI Intermedio Pediátrico** | Unidad de Cuidados Intermedios Pediátricos | CAMAS-Cuidado Intermedio Pediátrico |
+| **Hospitalización General** | Camas de Hospitalización General | CAMAS-Adultos + CAMAS-Pediátrica |
+| **Observación/Urgencias** | Camillas de Observación y Urgencias | CAMILLAS-Observación (todas) |
 
-## 📦 Instalación
+## 🚨 Umbrales de Alerta UCI
+
+- **🟢 Normal**: < 70% de ocupación
+- **🟡 Advertencia**: 70% - 84% de ocupación  
+- **🔴 Crítico**: ≥ 85% de ocupación
+
+## 🛠️ Instalación
 
 ### Prerrequisitos
 
 - Python 3.8 o superior
 - pip (gestor de paquetes de Python)
 
-### Instalación de Dependencias
+### Instalación Rápida
 
 ```bash
 # Clonar el repositorio
 git clone <url-del-repositorio>
-cd hospital-capacity-analysis
+cd hospital-uci-optimized
 
 # Crear entorno virtual (recomendado)
 python -m venv venv
@@ -56,162 +64,214 @@ pip install -r requirements.txt
 
 ## 🚀 Uso
 
-### Comando Básico
+### Comandos Básicos
 
 ```bash
-python hospital_report.py archivo_datos.xlsx [archivo_salida.pdf]
+# Generar ambos informes (recomendado)
+python hospital_uci_optimized.py datos.xlsx ambos
+
+# Generar solo informe simple (estilo Word)
+python hospital_uci_optimized.py datos.xlsx simple
+
+# Generar solo dashboard (visualizaciones múltiples)
+python hospital_uci_optimized.py datos.xlsx dashboard
 ```
 
-### Ejemplos de Uso
+### Ejemplos Específicos
 
 ```bash
-# Generar informe con nombre automático
-python hospital_report.py datos_hospitalarios_2024.xlsx
+# Análisis completo con ambos tipos de informe
+python hospital_uci_optimized.py Detalle_Ocupacion_CI.xlsx ambos
 
-# Generar informe con nombre específico
-python hospital_report.py datos_hospitalarios_2024.xlsx informe_enero_2024.pdf
+# Solo informe ejecutivo simple
+python hospital_uci_optimized.py Detalle_Ocupacion_CI.xlsx simple
 
-# Ver ayuda y características del sistema
-python hospital_report.py
+# Solo dashboard con múltiples visualizaciones
+python hospital_uci_optimized.py Detalle_Ocupacion_CI.xlsx dashboard
 ```
 
-## 📊 Estructura del Informe
+## 📊 Estructura de Informes
 
-El informe generado incluye las siguientes secciones:
+### 🔸 Informe Simple (Estilo Word)
 
-### 1. 📈 Resumen Ejecutivo General
-- Estadísticas generales del Tolima
-- Análisis CAMAS vs CAMILLAS
-- Indicadores clave de ocupación
+1. **Portada Institucional**
+   - Logo de la Gobernación del Tolima
+   - Fecha y hora de generación
 
-### 2. 📊 Análisis Gráfico Optimizado
-- Gráficos de capacidad y ocupación
-- Comparativas por municipios
-- Visualizaciones por tipo de capacidad
+2. **Resumen Ejecutivo UCI**
+   - Situación general UCI departamental
+   - Estadísticas por categoría UCI
+   - Gráficos de barras simples
 
-### 3. 🚨 Alertas Críticas Detalladas
-- Municipios con ocupación crítica (≥90%)
-- Sedes específicas en estado crítico
-- Tipos de capacidad con alta ocupación
+3. **Análisis UCI - Ibagué**
+   - Participación de Ibagué en UCI departamental
+   - Detalle por categoría UCI
+   - Comparativas con el departamento
 
-### 4. 🛏️ Análisis por Tipos de Capacidad
-- Distinción completa CAMAS/CAMILLAS
-- UCI, Cuidado Intermedio, Hospitalización
-- Observación por grupos etarios
+4. **Análisis Específico - Hospital Federico Lleras Acosta**
+   - Participación en UCI departamental e Ibagué
+   - Detalle UCI por categoría
+   - Estado específico por servicio
 
-### 5. 🏛️ Análisis Detallado de Ibagué
-- Capital departamental con análisis específico
-- Desglose por tipo de capacidad
-- Comparativas con el resto del departamento
+5. **Alertas UCI y Recomendaciones**
+   - Alertas automáticas por umbrales
+   - Recomendaciones para toma de decisiones
 
-### 6. 🗺️ Análisis Municipal y de Prestadores
-- Todos los municipios del Tolima
-- Prestadores específicos por municipio
-- Instituciones públicas vs privadas
+### 🔸 Informe Dashboard (Múltiples Visualizaciones)
+
+1. **Dashboard Principal**
+   - Panel resumen general UCI
+   - Alertas críticas en tiempo real
+   - Distribución por municipios
+   - Gráficos tipo dona por categoría
+   - Tendencias y comparativas
+
+2. **Análisis Detallado**
+   - Misma estructura que informe simple
+   - Gráficos más complejos y detallados
 
 ## 📁 Estructura de Archivos
 
 ```
-hospital-capacity-analysis/
-├── hospital_report.py          # Script principal
-├── requirements.txt            # Dependencias Python
-├── README.md                   # Documentación
-├── .gitignore                 # Archivos ignorados por Git
-├── LICENSE                    # Licencia del proyecto
-├── examples/                  # Ejemplos de uso
-│   └── sample_data.xlsx       # Datos de ejemplo
-└── docs/                      # Documentación adicional
-    ├── manual_usuario.md      # Manual de usuario
-    └── especificaciones.md    # Especificaciones técnicas
+hospital-uci-optimized/
+├── hospital_uci_optimized.py  # Sistema principal optimizado
+├── requirements.txt           # Dependencias Python
+├── README.md                  # Esta documentación
+├── .gitignore                # Archivos ignorados por Git
+├── ejemplos/                  # Ejemplos de uso
+│   └── Detalle_Ocupacion_CI.xlsx
+├── docs/                      # Documentación adicional
+│   ├── manual_usuario.md
+│   └── especificaciones_uci.md
+└── assets/                    # Recursos
+    └── logo_tolima.png        # Logo institucional
 ```
 
 ## 📋 Formato de Datos de Entrada
 
-El archivo Excel debe contener las siguientes columnas:
+El archivo Excel debe contener las siguientes columnas obligatorias:
 
 | Columna | Descripción | Tipo |
 |---------|-------------|------|
-| `fecha_registro` | Fecha del registro | Fecha |
 | `municipio_sede_prestador` | Municipio de la sede | Texto |
 | `nombre_prestador` | Nombre del prestador de salud | Texto |
+| `nivel_de_atencion_prestador` | Nivel de atención (1, 2, 3) | Numérico |
 | `nombre_sede_prestador` | Nombre de la sede específica | Texto |
-| `numero_sede` | Número identificador de la sede | Numérico |
-| `nombre_capacidad_instalada` | Tipo de capacidad (camas/camillas) | Texto |
+| `nombre_capacidad_instalada` | Tipo de capacidad (UCI, camas, camillas) | Texto |
 | `cantidad_ci_TOTAL_REPS` | Capacidad total disponible | Numérico |
-| `ocupacion_ci_confirmado_covid19` | Ocupación COVID-19 confirmado | Numérico |
-| `ocupacion_ci_sospechoso_covid19` | Ocupación COVID-19 sospechoso | Numérico |
-| `ocupacion_ci_no_covid19` | Ocupación no COVID-19 | Numérico |
-| `cantidad_ci_disponibles` | Capacidad disponible | Numérico |
-| `total_ingresos_paciente_servicio` | Total de pacientes ingresados | Numérico |
-| `naturaleza_juridica` | Tipo de institución | Texto |
+| `total_ingresos_paciente_servicio` | Pacientes ingresados (ocupación) | Numérico |
+
+### Tipos de Capacidad Reconocidos
+
+- `CAMAS-Cuidado Intensivo Adulto`
+- `CAMAS-Cuidado Intensivo Pediátrico`
+- `CAMAS-Cuidado Intermedio Adulto`
+- `CAMAS-Cuidado Intermedio Pediátrico`
+- `CAMAS-Intensiva Adultos`
+- `CAMAS-Adultos`
+- `CAMAS-Pediátrica`
+- `CAMILLAS-Observación Adultos Hombres`
+- `CAMILLAS-Observación Adultos Mujeres`
+- `CAMILLAS-Observación Pediátrica`
 
 ## 🔧 Configuración
 
-### Colores Institucionales
-
-El sistema utiliza los colores oficiales de la Secretaría de Salud del Tolima:
+### Colores Institucionales UCI
 
 ```python
 COLORS = {
-    "primary": "#7D0F2B",      # Rojo institucional
-    "secondary": "#F2A900",     # Amarillo dorado
-    "accent": "#5A4214",        # Marrón
-    "success": "#509E2F",       # Verde
-    "warning": "#F7941D",       # Naranja
-    "white": "#FFFFFF",         # Blanco
+    "primary": "#7D0F2B",        # Rojo institucional Tolima
+    "secondary": "#F2A900",      # Amarillo dorado
+    "uci_adulto": "#E53E3E",     # Rojo para UCI Adulto
+    "uci_pediatrico": "#3182CE", # Azul para UCI Pediátrico
+    "uci_intermedio": "#38A169", # Verde para UCI Intermedio
+    "hospitalizacion": "#805AD5", # Púrpura para Hospitalización
+    "observacion": "#F56500"     # Naranja para Observación
 }
 ```
 
-### Umbrales de Alertas
+### Umbrales de Alertas UCI
 
-- **🟢 Normal**: < 70% de ocupación
-- **🟡 Advertencia**: 70% - 89% de ocupación
-- **🔴 Crítico**: ≥ 90% de ocupación
+```python
+UMBRALES_UCI = {
+    "critico": 85,      # ≥85% crítico para UCI
+    "advertencia": 70,  # 70-84% advertencia para UCI
+    "normal": 0         # <70% normal
+}
+```
+
+## 📈 Salidas del Sistema
+
+### Archivos Generados
+
+- **`informe_uci_simple_YYYYMMDD_HHMMSS.pdf`**: Informe ejecutivo simple
+- **`informe_uci_dashboard_YYYYMMDD_HHMMSS.pdf`**: Dashboard con visualizaciones múltiples
+
+### Estadísticas Mostradas
+
+```
+📊 Estadísticas procesadas:
+   🏥 Total registros: 368
+   🏘️ Municipios: 47
+   🏛️ Prestadores: 69
+   🎯 Capacidad UCI: 356 camas
+   📈 Ocupación UCI: 88 pacientes (24.7%)
+   🏥 Hospital Federico Lleras: ✅ ENCONTRADO
+```
 
 ## 🤝 Contribución
 
 Para contribuir al proyecto:
 
 1. Fork el repositorio
-2. Crea una rama para tu feature (`git checkout -b feature/nueva-funcionalidad`)
-3. Commit tus cambios (`git commit -am 'Agregar nueva funcionalidad'`)
-4. Push a la rama (`git push origin feature/nueva-funcionalidad`)
+2. Crea una rama para tu feature (`git checkout -b feature/nueva-funcionalidad-uci`)
+3. Commit tus cambios (`git commit -am 'Agregar nueva funcionalidad UCI'`)
+4. Push a la rama (`git push origin feature/nueva-funcionalidad-uci`)
 5. Crea un Pull Request
 
 ## 📝 Changelog
 
-### Versión 1.0.0 (Actual)
-- ✅ Análisis completo CAMAS vs CAMILLAS
-- ✅ Gráficos optimizados con mayor altura
-- ✅ Alertas críticas en formato tabla
-- ✅ Análisis detallado por municipio y prestador
-- ✅ Generación de PDF profesional
-- ✅ Soporte para datos COVID-19 y no COVID-19
+### Versión 2.0.0 (Optimizada - Actual)
+- ✅ **Enfoque UCI específico** según datos reales REPS
+- ✅ **Dos tipos de informes**: Simple y Dashboard
+- ✅ **Categorización precisa** basada en datos Excel
+- ✅ **Sección específica Hospital Federico Lleras**
+- ✅ **Umbrales UCI especializados** (85% crítico vs 90% general)
+- ✅ **Alertas automáticas** para toma de decisiones
+- ✅ **Gráficos optimizados** estilo Word y Dashboard
+- ✅ **Integración logo institucional**
+
+### Versión 1.0.0 (Original)
+- ✅ Análisis general por servicios y niveles
+- ✅ Generación PDF básica
+- ✅ Soporte para datos COVID-19
 
 ## 🐛 Reporte de Problemas
 
-Si encuentras algún problema o tienes sugerencias:
+Si encuentras algún problema:
 
 1. Revisa los [issues existentes](../../issues)
 2. Si no existe, crea un nuevo issue con:
-   - Descripción detallada del problema
+   - Descripción detallada del problema UCI
    - Pasos para reproducir
-   - Archivos de ejemplo (sin datos sensibles)
-   - Versión de Python y SO
+   - Archivo Excel de ejemplo (sin datos sensibles)
+   - Tipo de informe que intentabas generar
 
-## 📞 Soporte
+## 📞 Soporte Técnico
 
-Para soporte técnico o consultas:
+Para soporte técnico o consultas sobre UCI:
 
 - **Desarrollador**: Ing. José Miguel Santos
 - **Institución**: Secretaría de Salud del Tolima
+- **Especialidad**: Sistemas de Monitoreo UCI
 - **Email**: [contacto institucional]
 
 ## 🔐 Seguridad y Privacidad
 
-- ⚠️ **Datos Sensibles**: No incluir archivos Excel con datos reales en el repositorio
-- 🔒 **Confidencialidad**: Los reportes generados pueden contener información sensible
-- 🚫 **Exclusiones**: El `.gitignore` está configurado para excluir datos hospitalarios
+- ⚠️ **Datos Sensibles UCI**: No incluir archivos Excel con datos reales en el repositorio
+- 🔒 **Confidencialidad Médica**: Los reportes UCI pueden contener información crítica de salud
+- 🚫 **Exclusiones**: El `.gitignore` está configurado para excluir datos hospitalarios sensibles
+- 🏥 **Uso Autorizado**: Solo para personal autorizado de la Secretaría de Salud
 
 ## 📄 Licencia
 
@@ -220,4 +280,6 @@ Este proyecto está bajo la Licencia MIT. Ver el archivo [LICENSE](LICENSE) para
 ---
 
 **© 2025 - Secretaría de Salud del Tolima**  
-*Sistema Final Optimizado de Monitoreo Hospitalario*
+*Sistema Optimizado de Monitoreo UCI*
+
+**🎯 Enfoque Especializado UCI | 📊 Informes Ejecutivos | 🚨 Alertas en Tiempo Real**

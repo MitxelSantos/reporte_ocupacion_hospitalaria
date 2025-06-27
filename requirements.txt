@@ -1,7 +1,26 @@
+# Dependencias para Sistema Optimizado UCI - Tolima
+# ================================================
+
+# Análisis de datos
 pandas>=1.5.0
 numpy>=1.24.0
+openpyxl>=3.1.0
+
+# Visualización
 matplotlib>=3.6.0
 seaborn>=0.12.0
+
+# Generación de PDF
 reportlab>=3.6.0
-openpyxl>=3.1.0
+
+# Utilidades
 pathlib2>=2.3.0
+datetime
+
+# Procesamiento de archivos
+xlrd>=2.0.1  # Para archivos Excel legacy
+xlsxwriter>=3.0.9  # Para generar Excel de salida
+
+# Opcional: Para mejores gráficos
+plotly>=5.11.0  # Para gráficos interactivos (futuro)
+kaleido>=0.2.1  # Para exportar plotly a imagen
